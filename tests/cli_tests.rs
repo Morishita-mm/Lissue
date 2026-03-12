@@ -64,12 +64,13 @@ fn test_cli_lifecycle() {
         .success()
         .stdout(predicate::str::contains("Close"));
 
-    // 7. sync 実行 (tasks.json の確認)
+    // 7. sync 実行 (tasks ディレクトリの確認)
     let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
     cmd.current_dir(root).arg("sync").assert().success();
 
-    assert!(root.join(".mytodo/tasks.json").exists());
-}
+    assert!(root.join(".mytodo/tasks").is_dir());
+    }
+
 
 #[test]
 fn test_tree_display() {

@@ -20,7 +20,7 @@ impl TodoUsecase {
     pub fn new(root_dir: PathBuf) -> Result<Self> {
         let dot_mytodo = root_dir.join(".mytodo");
         let db_path = dot_mytodo.join("data.db");
-        let json_path = dot_mytodo.join("tasks.json");
+        let tasks_dir = dot_mytodo.join("tasks");
         let config_path = dot_mytodo.join("config.yaml");
 
         if !dot_mytodo.exists() {
@@ -28,7 +28,7 @@ impl TodoUsecase {
         }
 
         let repo = SqliteRepository::new(db_path)?;
-        let json_repo = JsonRepository::new(json_path);
+        let json_repo = JsonRepository::new(tasks_dir);
         let config_repo = YamlConfigRepository::new(config_path);
 
         Ok(Self {
@@ -45,7 +45,16 @@ impl TodoUsecase {
             fs::create_dir(&dot_mytodo)?;
         }
 
-        // gitignore への追記
+        let tasks_dir = dot_mytodo.join("tasks");
+        if !tasks_dir.exists() {
+            fs::create_dir(&tasks_dir)?;
+        }
+
+        let gitattributes_path = tasks_dir.join(".gitattributes");
+        if !gitattributes_path.exists() {
+            fs::write(gitattributes_path, "**/*.json linguist-generated=true\n")?;
+        }
+
         let gitignore_path = root_dir.join(".gitignore");
         let mut content = if gitignore_path.exists() {
             fs::read_to_string(&gitignore_path)?
@@ -61,13 +70,11 @@ impl TodoUsecase {
             fs::write(gitignore_path, content)?;
         }
 
-        // 初期設定ファイルの作成
         let config_repo = YamlConfigRepository::new(dot_mytodo.join("config.yaml"));
         if !dot_mytodo.join("config.yaml").exists() {
             config_repo.save(&Config::default())?;
         }
 
-        // DBの初期化（SqliteRepository::new 内で行われる）
         SqliteRepository::new(dot_mytodo.join("data.db"))?;
 
         Ok(())
@@ -91,9 +98,8 @@ impl TodoUsecase {
 
         let task = Task::new(title, description, parent_global_id);
         self.repo.save(&task)?;
-        self.sync_to_json()?;
+        self.json_repo.save_task(&task)?;
 
-        // local_id を取得するために再度検索（あるいは save で ID を返すようにリポジトリを修正するのもあり）
         let saved_task = self
             .repo
             .find_by_global_id(task.global_id)?
@@ -114,7 +120,7 @@ impl TodoUsecase {
         task.status = status;
         task.updated_at = Utc::now();
         self.repo.save(&task)?;
-        self.sync_to_json()
+        self.json_repo.save_task(&task)
     }
 
     pub fn sync(&self) -> Result<()> {
@@ -124,17 +130,12 @@ impl TodoUsecase {
 
             match local_task {
                 Some(lt) => {
-                    // Last-Write-Wins
                     if json_task.updated_at > lt.updated_at {
-                        // JSON側が新しいのでDBを更新
-                        // local_id を維持する必要がある
                         json_task.local_id = lt.local_id;
                         self.repo.save(&json_task)?;
                     }
                 }
                 None => {
-                    // DBに存在しないので追加
-                    // 追加時は local_id を None にして AUTOINCREMENT に任せる
                     json_task.local_id = None;
                     self.repo.save(&json_task)?;
                 }
@@ -161,7 +162,7 @@ impl TodoUsecase {
         child.parent_global_id = Some(parent.global_id);
         child.updated_at = Utc::now();
         self.repo.save(&child)?;
-        self.sync_to_json()
+        self.json_repo.save_task(&child)
     }
 
     pub fn unlink_task(&self, id: i32) -> Result<()> {
@@ -173,7 +174,7 @@ impl TodoUsecase {
         task.parent_global_id = None;
         task.updated_at = Utc::now();
         self.repo.save(&task)?;
-        self.sync_to_json()
+        self.json_repo.save_task(&task)
     }
 
     pub fn claim_task(&self, id: i32, assignee: Option<String>) -> Result<()> {
@@ -186,7 +187,7 @@ impl TodoUsecase {
         task.assignee = assignee;
         task.updated_at = Utc::now();
         self.repo.save(&task)?;
-        self.sync_to_json()
+        self.json_repo.save_task(&task)
     }
 
     pub fn get_task_context(&self, id: i32) -> Result<(Task, String)> {
@@ -230,11 +231,11 @@ impl TodoUsecase {
 
     pub fn save_task(&self, task: &Task) -> Result<()> {
         self.repo.save(task)?;
-        self.sync_to_json()
+        self.json_repo.save_task(task)
     }
 
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
-        let config = self.config_repo.load()?;
+        let config = self.get_config()?;
         let all_tasks = self.repo.find_all()?;
         let mut updated = false;
 
@@ -250,6 +251,7 @@ impl TodoUsecase {
             if file_updated {
                 task.updated_at = Utc::now();
                 self.repo.save(&task)?;
+                self.json_repo.save_task(&task)?;
             }
         }
 
@@ -257,7 +259,6 @@ impl TodoUsecase {
             self.sync_to_json()?;
         }
 
-        // 物理ファイルの移動
         let old_full = self.root_dir.join(old_path);
         let new_full = self.root_dir.join(new_path);
 
@@ -315,6 +316,7 @@ mod tests {
         assert!(root.join(".mytodo").exists());
         assert!(root.join(".mytodo/data.db").exists());
         assert!(root.join(".mytodo/config.yaml").exists());
+        assert!(root.join(".mytodo/tasks/.gitattributes").exists());
         assert!(root.join(".gitignore").exists());
 
         let gitignore = fs::read_to_string(root.join(".gitignore"))?;
@@ -348,28 +350,23 @@ mod tests {
         TodoUsecase::init(root.clone())?;
         let usecase = TodoUsecase::new(root.clone())?;
 
-        // 1. タスク追加
         let _task = usecase.add_task("Base Task".to_string(), None, None)?;
 
-        // 2. JSONを直接書き換えて古いデータにする
         let mut tasks_in_json = usecase.json_repo.load_all()?;
         let original_updated_at = tasks_in_json[0].updated_at;
         tasks_in_json[0].title = "Old JSON".to_string();
         tasks_in_json[0].updated_at = original_updated_at - Duration::minutes(10);
         usecase.json_repo.save_all(&tasks_in_json)?;
 
-        // 3. 同期実行（DBの方が新しいのでDB優先）
         usecase.sync()?;
         let tasks = usecase.list_tasks()?;
         assert_eq!(tasks[0].title, "Base Task");
 
-        // 4. JSONを新しくする
         let mut tasks_in_json = usecase.json_repo.load_all()?;
         tasks_in_json[0].title = "New JSON".to_string();
         tasks_in_json[0].updated_at = Utc::now() + Duration::minutes(10);
         usecase.json_repo.save_all(&tasks_in_json)?;
 
-        // 5. 同期実行（JSONの方が新しいのでJSON優先）
         usecase.sync()?;
         let tasks = usecase.list_tasks()?;
         assert_eq!(tasks[0].title, "New JSON");
@@ -386,7 +383,7 @@ mod tests {
 
         let mut task = usecase.add_task("Assignee Test".to_string(), None, None)?;
         task.assignee = Some("AI-Agent".to_string());
-        usecase.repo.save(&task)?;
+        usecase.save_task(&task)?;
 
         let retrieved = usecase.repo.find_by_local_id(1)?.unwrap();
         assert_eq!(retrieved.assignee, Some("AI-Agent".to_string()));
@@ -418,14 +415,13 @@ mod tests {
         TodoUsecase::init(root.clone())?;
         let usecase = TodoUsecase::new(root.clone())?;
 
-        // 関連ファイルの作成
         let file_path = "test_file.txt";
         fs::write(root.join(file_path), "File Content")?;
 
         let mut task =
             usecase.add_task("Context Test".to_string(), Some("Desc".to_string()), None)?;
         task.linked_files.push(file_path.to_string());
-        usecase.repo.save(&task)?;
+        usecase.save_task(&task)?;
 
         let (_, context) = usecase.get_task_context(1)?;
         assert!(context.contains("Context Test"));
@@ -455,19 +451,16 @@ mod tests {
         TodoUsecase::init(root.clone())?;
         let usecase = TodoUsecase::new(root.clone())?;
 
-        // 1. タスク作成とファイル紐付け
         let old_path = "old_file.txt";
         let new_path = "new_file.txt";
         fs::write(root.join(old_path), "content")?;
 
         let mut task = usecase.add_task("Move Test".to_string(), None, None)?;
         task.linked_files.push(old_path.to_string());
-        usecase.repo.save(&task)?;
+        usecase.save_task(&task)?;
 
-        // 2. move_file を実行
         usecase.move_file(old_path, new_path)?;
 
-        // 3. 全タスクをチェックし、古いパスが新しいパスに置換されているか確認
         let tasks = usecase.list_tasks()?;
         assert_eq!(tasks[0].linked_files[0], new_path);
         assert!(root.join(new_path).exists());

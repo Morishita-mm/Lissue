@@ -13,6 +13,7 @@ uuid = { version = "1.8", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 tempfile = "3.10"
+walkdir = "2.5"
 
 [dev-dependencies]
 assert_cmd = "2.0"
