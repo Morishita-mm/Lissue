@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
-use rust_todo_cli::domain;
-use rust_todo_cli::presentation::{Cli, Commands};
-use rust_todo_cli::usecase::TodoUsecase;
+use lissue::domain;
+use lissue::presentation::{Cli, Commands};
+use lissue::usecase::todo::TaskFilter;
+use lissue::usecase::TodoUsecase;
 use std::env;
 use std::fs;
 use std::io::Read;
@@ -15,7 +16,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Init => {
             TodoUsecase::init(root_dir)?;
-            println!("Initialized .mytodo repository.");
+            println!("Initialized .lissue repository.");
         }
         Commands::Add {
             title,
@@ -24,7 +25,7 @@ fn main() -> Result<()> {
             files,
         } => {
             let usecase = TodoUsecase::new(root_dir)?;
-            let (final_title, final_message) = if let Some(t) = title {
+            let (final_title, final_message): (String, Option<String>) = if let Some(t) = title {
                 (t, message)
             } else {
                 let content = run_editor()?;
@@ -53,21 +54,18 @@ fn main() -> Result<()> {
             let usecase = TodoUsecase::new(root_dir)?;
             let config = usecase.get_config()?;
             let final_format = format.unwrap_or(config.output.default_format);
-            let tasks = usecase.list_tasks(rust_todo_cli::usecase::todo::TaskFilter {
-                status,
-                unassigned,
-            })?;
+            let tasks = usecase.list_tasks(TaskFilter { status, unassigned })?;
             if final_format == "json" {
                 println!("{}", serde_json::to_string_pretty(&tasks)?);
             } else {
-                rust_todo_cli::presentation::cli::print_tasks_human(&tasks, tree);
+                lissue::presentation::cli::print_tasks_human(&tasks, tree);
             }
         }
         Commands::Next => {
             let usecase = TodoUsecase::new(root_dir)?;
             if let Some(task) = usecase.get_next_task()? {
                 let tasks = vec![task];
-                rust_todo_cli::presentation::cli::print_tasks_human(&tasks, false);
+                lissue::presentation::cli::print_tasks_human(&tasks, false);
             } else {
                 println!("No tasks available.");
             }

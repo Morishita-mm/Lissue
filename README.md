@@ -1,8 +1,12 @@
-# rust-todo-cli
+# lissue
 
-A powerful, Git-friendly local TODO CLI designed for developers and AI coding agents. It manages your project tasks using a hybrid storage of SQLite (for speed) and JSON (for Git-based sharing).
+**lissue** (short for **Local Issue**) is a powerful, Git-friendly local TODO CLI designed for developers and AI coding agents. It manages your project tasks using a hybrid storage of SQLite (for speed) and JSON (for Git-based sharing).
 
 ![Demo](docs/demo.gif)
+
+## Why lissue?
+
+The name **lissue** comes from "Local Issue". It aims to bring the powerful issue-tracking experience of GitHub/GitLab directly to your local terminal, enabling seamless collaboration between humans and AI agents through Git.
 
 ## Key Features
 
@@ -28,49 +32,49 @@ cargo install --path .
 
 1. **Initialize** the repository in your project root:
    ```bash
-   mytodo init
+   lissue init
    ```
 2. **Add** a task:
    ```bash
-   mytodo add "Implement login feature" -m "Use OAuth2"
-   # Or just 'mytodo add' to open your $EDITOR
+   lissue add "Implement login feature" -m "Use OAuth2"
+   # Or just 'lissue add' to open your $EDITOR
    ```
 3. **List** tasks:
    ```bash
-   mytodo list --tree
+   lissue list --tree
    ```
 4. **Claim** a task (for AI agents or team members):
    ```bash
-   mytodo claim 1 --by "Agent-Alpha"
+   lissue claim 1 --by "Agent-Alpha"
    ```
 5. **Sync** with Git (Apply merged JSON files to your local database):
    ```bash
-   mytodo sync
+   lissue sync
    ```
 
 ## Command Reference
 
 | Command | Description |
 | :--- | :--- |
-| `mytodo init` | Initialize `.mytodo` directory and database. |
-| `mytodo add [TITLE]` | Add a new task. Opens editor if title is omitted. |
-| `mytodo list` | List tasks. Supports `--format json`, `--tree`, and filters. |
-| `mytodo next` | Get the next available task (Open & Unassigned). |
-| `mytodo claim <ID>` | Mark task as In Progress and assign to yourself/agent. |
-| `mytodo close <ID>` | Close a task. |
-| `mytodo open <ID>` | Reopen a closed task. |
-| `mytodo link <ID> --to <PID>` | Create a parent-child relationship. |
-| `mytodo context <ID>` | Dump task details and linked file contents for AI. |
-| `mytodo mv <OLD> <NEW>` | Move a file and update all linked tasks. |
-| `mytodo rm <ID>` | Permanently remove a task. |
-| `mytodo clear` | Permanently remove all closed tasks. |
+| `lissue init` | Initialize `.lissue` directory and database. |
+| `lissue add [TITLE]` | Add a new task. Opens editor if title is omitted. |
+| `lissue list` | List tasks. Supports `--format json`, `--tree`, and filters. |
+| `lissue next` | Get the next available task (Open & Unassigned). |
+| `lissue claim <ID>` | Mark task as In Progress and assign to yourself/agent. |
+| `lissue close <ID>` | Close a task. |
+| `lissue open <ID>` | Reopen a closed task. |
+| `lissue link <ID> --to <PID>` | Create a parent-child relationship. |
+| `lissue context <ID>` | Dump task details and linked file contents for AI. |
+| `lissue mv <OLD> <NEW>` | Move a file and update all linked tasks. |
+| `lissue rm <ID>` | Permanently remove a task. |
+| `lissue clear` | Permanently remove all closed tasks. |
 
 ## Configuration
 
-Settings are stored in `.mytodo/config.yaml`:
+Settings are stored in `.lissue/config.yaml`:
 - `output.default_format`: `human` or `json`
 - `output.auto_sync`: Enable/disable implicit sync during `list` or `next`.
-- `integration.git_mv_hook`: Use `git mv` during `mytodo mv`.
+- `integration.git_mv_hook`: Use `git mv` during `lissue mv`.
 - `context.strategy`: `paths_only` or `raw_content`.
 
 ## License

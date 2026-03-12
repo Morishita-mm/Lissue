@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Parser)]
-#[command(name = "mytodo")]
+#[command(name = "lissue")]
 #[command(about = "A local TODO CLI for project management", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]

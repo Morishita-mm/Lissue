@@ -1,4 +1,4 @@
-use rust_todo_cli::usecase::todo::{TaskFilter, TodoUsecase};
+use lissue::usecase::todo::{TaskFilter, TodoUsecase};
 use std::time::Instant;
 use tempfile::tempdir;
 

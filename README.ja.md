@@ -1,8 +1,12 @@
-# rust-todo-cli
+# lissue
 
-開発者とAIエージェントのために設計された、GitフレンドリーなローカルTODO管理CLIツール。SQLite（高速なローカル操作）とJSON（Gitによる共有）のハイブリッドストレージを採用しています。
+**lissue**（Local Issueの略称）は、開発者とAIエージェントのために設計された、GitフレンドリーなローカルTODO管理CLIツール。SQLite（高速なローカル操作）とJSON（Gitによる共有）のハイブリッドストレージを採用しています。
 
 ![Demo](docs/demo.gif)
+
+## 名前の由来
+
+**lissue**（リシュー）という名前は、Local Issueに由来します。GitHubやGitLabの強力なIssue管理体験をローカル環境（ターミナル）に持ち込み、Gitを通じて人間とAIエージェントが円滑に連携できる環境を目指しています。
 
 ## 主な機能
 
@@ -28,49 +32,49 @@ cargo install --path .
 
 1. プロジェクトルートで **初期化** を行います。
    ```bash
-   mytodo init
+   lissue init
    ```
 2. タスクを **追加** します。
    ```bash
-   mytodo add "ログイン機能を実装する" -m "OAuth2を使用すること"
+   lissue add "ログイン機能を実装する" -m "OAuth2を使用すること"
    # 引数なしで実行するとエディタが開きます
    ```
 3. タスクを **一覧表示** します。
    ```bash
-   mytodo list --tree
+   lissue list --tree
    ```
 4. タスクを **確保（Claim）** します（AIエージェントやチームメンバー用）。
    ```bash
-   mytodo claim 1 --by "Agent-Alpha"
+   lissue claim 1 --by "Agent-Alpha"
    ```
 5. Git経由で共有されたデータを **同期** します。
    ```bash
-   mytodo sync
+   lissue sync
    ```
 
 ## コマンドリファレンス
 
 | コマンド | 説明 |
 | :--- | :--- |
-| `mytodo init` | `.mytodo` ディレクトリとデータベースを初期化します。 |
-| `mytodo add [TITLE]` | タスクを追加します。タイトル省略時はエディタを起動します。 |
-| `mytodo list` | 一覧表示。`--format json` や `--tree`、フィルタリングが可能です。 |
-| `mytodo next` | 次に着手すべきタスク（Open かつ 未割当）を取得します。 |
-| `mytodo claim <ID>` | ステータスを In Progress にし、担当者を割り当てます。 |
-| `mytodo close <ID>` | タスクを完了（Close）します。 |
-| `mytodo open <ID>` | 完了したタスクを再開（Open）します。 |
-| `mytodo link <ID> --to <PID>` | タスク間に親子関係を構築します。 |
-| `mytodo context <ID>` | AI向けにタスク詳細と関連ファイルの内容を出力します。 |
-| `mytodo mv <OLD> <NEW>` | ファイルを移動し、タスクに紐付くパスを一括更新します。 |
-| `mytodo rm <ID>` | タスクを物理削除します。 |
-| `mytodo clear` | クローズ済みのタスクをすべて一括削除します。 |
+| `lissue init` | `.lissue` ディレクトリとデータベースを初期化します。 |
+| `lissue add [TITLE]` | タスクを追加します。タイトル省略時はエディタを起動します。 |
+| `lissue list` | 一覧表示。`--format json` や `--tree`、フィルタリングが可能です。 |
+| `lissue next` | 次に着手すべきタスク（Open かつ 未割当）を取得します。 |
+| `lissue claim <ID>` | ステータスを In Progress にし、担当者を割り当てます。 |
+| `lissue close <ID>` | タスクを完了（Close）します。 |
+| `lissue open <ID>` | 完了したタスクを再開（Open）します。 |
+| `lissue link <ID> --to <PID>` | タスク間に親子関係を構築します。 |
+| `lissue context <ID>` | AI向けにタスク詳細と関連ファイルの内容を出力します。 |
+| `lissue mv <OLD> <NEW>` | ファイルを移動し、タスクに紐付くパスを一括更新します。 |
+| `lissue rm <ID>` | タスクを物理削除します。 |
+| `lissue clear` | クローズ済みのタスクをすべて一括削除します。 |
 
 ## 設定ファイル
 
-設定は `.mytodo/config.yaml` で管理されます。
+設定は `.lissue/config.yaml` で管理されます。
 - `output.default_format`: デフォルトの出力形式（`human` または `json`）。
 - `output.auto_sync`: `list` や `next` 実行時の自動同期の有効/無効。
-- `integration.git_mv_hook`: `mytodo mv` 実行時に `git mv` を使用するかどうか。
+- `integration.git_mv_hook`: `lissue mv` 実行時に `git mv` を使用するかどうか。
 - `context.strategy`: コンテキスト出力の戦略（`paths_only` または `raw_content`）。
 
 ## ライセンス

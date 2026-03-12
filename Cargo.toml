@@ -1,5 +1,5 @@
 [package]
-name = "rust-todo-cli"
+name = "lissue"
 version = "0.1.0"
 authors = ["Morishita-mm <183205013+Morishita-mm@users.noreply.github.com>"]
 edition = "2024"
@@ -11,7 +11,7 @@ keywords = ["todo", "cli", "productivity", "git", "sqlite"]
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "mytodo"
+name = "lissue"
 path = "src/main.rs"
 
 [dependencies]

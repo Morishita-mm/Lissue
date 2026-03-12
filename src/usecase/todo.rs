@@ -29,7 +29,7 @@ impl TodoUsecase {
             .canonicalize()
             .with_context(|| format!("Failed to canonicalize project root: {:?}", root_dir))?;
 
-        let dot_mytodo = canonical_root.join(".mytodo");
+        let dot_mytodo = canonical_root.join(".lissue");
         let db_path = dot_mytodo.join("data.db");
         let tasks_dir = dot_mytodo.join("tasks");
         let config_path = dot_mytodo.join("config.yaml");
@@ -51,7 +51,7 @@ impl TodoUsecase {
     }
 
     pub fn init(root_dir: PathBuf) -> Result<()> {
-        let dot_mytodo = root_dir.join(".mytodo");
+        let dot_mytodo = root_dir.join(".lissue");
         if !dot_mytodo.exists() {
             fs::create_dir(&dot_mytodo)?;
         }
@@ -73,11 +73,11 @@ impl TodoUsecase {
             String::new()
         };
 
-        if !content.contains(".mytodo/data.db") {
+        if !content.contains(".lissue/data.db") {
             if !content.is_empty() && !content.ends_with('\n') {
                 content.push('\n');
             }
-            content.push_str(".mytodo/data.db\n");
+            content.push_str(".lissue/data.db\n");
             fs::write(gitignore_path, content)?;
         }
 
@@ -391,14 +391,14 @@ mod tests {
 
         TodoUsecase::init(root.clone())?;
 
-        assert!(root.join(".mytodo").exists());
-        assert!(root.join(".mytodo/data.db").exists());
-        assert!(root.join(".mytodo/config.yaml").exists());
-        assert!(root.join(".mytodo/tasks/.gitattributes").exists());
+        assert!(root.join(".lissue").exists());
+        assert!(root.join(".lissue/data.db").exists());
+        assert!(root.join(".lissue/config.yaml").exists());
+        assert!(root.join(".lissue/tasks/.gitattributes").exists());
         assert!(root.join(".gitignore").exists());
 
         let gitignore = fs::read_to_string(root.join(".gitignore"))?;
-        assert!(gitignore.contains(".mytodo/data.db"));
+        assert!(gitignore.contains(".lissue/data.db"));
 
         Ok(())
     }
