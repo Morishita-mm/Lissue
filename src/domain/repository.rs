@@ -7,6 +7,5 @@ pub trait TaskRepository {
     fn find_by_local_id(&self, local_id: i32) -> Result<Option<Task>>;
     fn find_by_global_id(&self, global_id: Uuid) -> Result<Option<Task>>;
     fn find_all(&self) -> Result<Vec<Task>>;
-    #[allow(dead_code)]
     fn delete(&self, local_id: i32) -> Result<()>;
 }

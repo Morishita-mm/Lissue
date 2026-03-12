@@ -21,7 +21,6 @@ impl YamlConfigRepository {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn load(&self) -> Result<Config> {
         if !self.path.exists() {
             return Ok(Config::default());

@@ -4,8 +4,9 @@ use crate::domain::task::{Status, Task};
 use crate::infrastructure::config::YamlConfigRepository;
 use crate::infrastructure::json::JsonRepository;
 use crate::infrastructure::sqlite::SqliteRepository;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
+use lexiclean::Lexiclean;
 use std::fs;
 use std::path::PathBuf;
 
@@ -18,7 +19,11 @@ pub struct TodoUsecase {
 
 impl TodoUsecase {
     pub fn new(root_dir: PathBuf) -> Result<Self> {
-        let dot_mytodo = root_dir.join(".mytodo");
+        let canonical_root = root_dir
+            .canonicalize()
+            .with_context(|| format!("Failed to canonicalize project root: {:?}", root_dir))?;
+
+        let dot_mytodo = canonical_root.join(".mytodo");
         let db_path = dot_mytodo.join("data.db");
         let tasks_dir = dot_mytodo.join("tasks");
         let config_path = dot_mytodo.join("config.yaml");
@@ -35,7 +40,7 @@ impl TodoUsecase {
             repo,
             json_repo,
             config_repo,
-            root_dir,
+            root_dir: canonical_root,
         })
     }
 
@@ -75,7 +80,8 @@ impl TodoUsecase {
             config_repo.save(&Config::default())?;
         }
 
-        SqliteRepository::new(dot_mytodo.join("data.db"))?;
+        // Initialize SQLite DB
+        let _ = SqliteRepository::new(dot_mytodo.join("data.db"))?;
 
         Ok(())
     }
@@ -105,6 +111,20 @@ impl TodoUsecase {
             .find_by_global_id(task.global_id)?
             .ok_or_else(|| anyhow!("Failed to retrieve saved task"))?;
         Ok(saved_task)
+    }
+
+    fn validate_path(&self, path: &str) -> Result<PathBuf> {
+        let full_path = self.root_dir.join(path);
+        let normalized = full_path.lexiclean();
+
+        if normalized.starts_with(&self.root_dir) {
+            Ok(full_path)
+        } else {
+            Err(anyhow!(
+                "Path traversal detected: {} is outside of project root",
+                path
+            ))
+        }
     }
 
     pub fn list_tasks(&self) -> Result<Vec<Task>> {
@@ -212,12 +232,13 @@ impl TodoUsecase {
         for file_path in &task.linked_files {
             context.push_str(&format!("- {}\n", file_path));
             if config.context.strategy == "raw_content" {
-                let full_path = self.root_dir.join(file_path);
-                if full_path.exists() {
-                    let content = fs::read_to_string(full_path)?;
-                    context.push_str("```\n");
-                    context.push_str(&content);
-                    context.push_str("\n```\n");
+                if let Ok(full_path) = self.validate_path(file_path) {
+                    if full_path.exists() {
+                        let content = fs::read_to_string(full_path)?;
+                        context.push_str("```\n");
+                        context.push_str(&content);
+                        context.push_str("\n```\n");
+                    }
                 }
             }
         }
@@ -235,6 +256,9 @@ impl TodoUsecase {
     }
 
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
+        let old_full = self.validate_path(old_path)?;
+        let new_full = self.validate_path(new_path)?;
+
         let config = self.get_config()?;
         let all_tasks = self.repo.find_all()?;
         let mut updated = false;
@@ -259,9 +283,6 @@ impl TodoUsecase {
             self.sync_to_json()?;
         }
 
-        let old_full = self.root_dir.join(old_path);
-        let new_full = self.root_dir.join(new_path);
-
         if config.integration.git_mv_hook {
             let status = std::process::Command::new("git")
                 .arg("mv")
@@ -271,16 +292,13 @@ impl TodoUsecase {
                 .status();
 
             if let Ok(s) = status {
-                if !s.success() {
-                    let _ = fs::rename(old_full, new_full);
+                if s.success() {
+                    return Ok(());
                 }
-            } else {
-                let _ = fs::rename(old_full, new_full);
             }
-        } else {
-            let _ = fs::rename(old_full, new_full);
         }
 
+        let _ = fs::rename(old_full, new_full);
         Ok(())
     }
 
@@ -292,7 +310,11 @@ impl TodoUsecase {
         let title = lines[0].trim().to_string();
         let description = if lines.len() > 1 {
             let desc = lines[1..].join("\n").trim().to_string();
-            if desc.is_empty() { None } else { Some(desc) }
+            if desc.is_empty() {
+                None
+            } else {
+                Some(desc)
+            }
         } else {
             None
         };
@@ -465,6 +487,24 @@ mod tests {
         assert_eq!(tasks[0].linked_files[0], new_path);
         assert!(root.join(new_path).exists());
         assert!(!root.join(old_path).exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_path() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root)?;
+
+        // Project root
+        assert!(usecase.validate_path("valid.txt").is_ok());
+        assert!(usecase.validate_path("subdir/valid.txt").is_ok());
+
+        // Path traversal
+        assert!(usecase.validate_path("../outside.txt").is_err());
+        assert!(usecase.validate_path("/etc/passwd").is_err());
 
         Ok(())
     }

@@ -1,7 +1,14 @@
 [package]
 name = "rust-todo-cli"
 version = "0.1.0"
+authors = ["Morishita-mm <183205013+Morishita-mm@users.noreply.github.com>"]
 edition = "2024"
+description = "A local TODO CLI for project management with SQLite and Git-friendly JSON storage"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Morishita-mm/rust-todo-cli"
+readme = "README.md"
+keywords = ["todo", "cli", "productivity", "git", "sqlite"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -14,6 +21,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 tempfile = "3.10"
 walkdir = "2.5"
+lexiclean = "0.0.1"
 
 [dev-dependencies]
 assert_cmd = "2.0"

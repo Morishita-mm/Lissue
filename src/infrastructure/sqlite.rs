@@ -1,7 +1,7 @@
 use crate::domain::repository::TaskRepository;
 use crate::domain::task::{Status, Task};
 use anyhow::Result;
-use rusqlite::{Connection, Row, params};
+use rusqlite::{params, Connection, Row};
 use std::path::Path;
 use uuid::Uuid;
 
