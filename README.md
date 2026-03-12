@@ -43,7 +43,9 @@ cargo install --path .
    ```
 2. **Add** a task:
    ```bash
-   lissue add "Implement login feature" -m "Use OAuth2"
+   lissue add "Main task" -m "Main description"
+   # Add a subtask to ID 1 with related files
+   lissue add "Sub task" -p 1 -f src/main.rs -f src/lib.rs
    # Or just 'lissue add' to open your $EDITOR
    ```
 3. **List** tasks:
@@ -61,20 +63,26 @@ cargo install --path .
 
 ## Command Reference
 
-| Command | Description |
-| :--- | :--- |
-| `lissue init` | Initialize `.lissue` directory and database. |
-| `lissue add [TITLE]` | Add a new task. Opens editor if title is omitted. |
-| `lissue list` | List tasks. Supports `--format json`, `--tree`, and filters. |
-| `lissue next` | Get the next available task (Open & Unassigned). |
-| `lissue claim <ID>` | Mark task as In Progress and assign to yourself/agent. |
-| `lissue close <ID>` | Close a task. |
-| `lissue open <ID>` | Reopen a closed task. |
-| `lissue link <ID> --to <PID>` | Create a parent-child relationship. |
-| `lissue context <ID>` | Dump task details and linked file contents for AI. |
-| `lissue mv <OLD> <NEW>` | Move a file and update all linked tasks. |
-| `lissue rm <ID>` | Permanently remove a task. |
-| `lissue clear` | Permanently remove all closed tasks. |
+| Command | Options | Description |
+| :--- | :--- | :--- |
+| `lissue init` | | Initialize `.lissue` directory and database. |
+| `lissue add [TITLE]` | `-m`, `-p`, `-f` | Add a new task. `-p`: parent ID, `-f`: linked file. |
+| `lissue list` | `-f`, `-t`, `-s`, `-u` | List tasks. `-t`: tree, `-s`: status, `-u`: unassigned. |
+| `lissue next` | | Get the next available task (Open & Unassigned). |
+| `lissue claim <ID>` | `--by` | Mark task as In Progress and assign to yourself/agent. |
+| `lissue close <ID>` | | Close a task. |
+| `lissue open <ID>` | | Reopen a closed task. |
+| `lissue link <ID>` | `--to` | Create a parent-child relationship. |
+| `lissue context <ID>`| | Dump task details and linked file contents for AI. |
+| `lissue mv <OLD> <NEW>`| | Move a file and update all linked tasks. |
+| `lissue rm <ID>` | | Permanently remove a task. |
+| `lissue clear` | | Permanently remove all closed tasks. |
+
+## Help and Discoverability
+
+You can explore all available commands and options using:
+- `lissue help`: List all available subcommands.
+- `lissue <COMMAND> --help`: Show detailed help for a specific subcommand (e.g., `lissue add --help`).
 
 ## Configuration
 

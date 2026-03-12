@@ -13,58 +13,68 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Initialize the .mytodo directory and database
+    /// Initialize the .lissue directory and database
     Init,
     /// Add a new task
     Add {
+        /// Title of the task (opens editor if omitted)
         title: Option<String>,
+        /// Optional detailed description
         #[arg(short, long)]
         message: Option<String>,
+        /// Parent task ID to create a subtask
         #[arg(short, long)]
         parent: Option<i32>,
+        /// Paths to files related to this task
         #[arg(short, long)]
         files: Vec<String>,
     },
-    /// List all tasks
+    /// List tasks with filtering and formatting
     List {
+        /// Output format (human or json)
         #[arg(short, long)]
         format: Option<String>,
+        /// Display tasks in a tree structure
         #[arg(short, long)]
         tree: bool,
+        /// Filter by status (Open or Close)
         #[arg(short, long)]
         status: Option<Status>,
+        /// Filter to show only unassigned tasks
         #[arg(short, long)]
         unassigned: bool,
     },
-    /// Get the next task to work on
+    /// Get the next recommended task to work on (Open and Unassigned)
     Next,
-    /// Close a task
+    /// Close a task by its local ID
     Close { local_id: i32 },
-    /// Open a task
+    /// Reopen a closed task
     Open { local_id: i32 },
-    /// Link two tasks in a parent-child relationship
+    /// Link a child task to a parent task
     Link {
         child_id: i32,
+        /// The local ID of the parent task
         #[arg(long)]
         to: i32,
     },
-    /// Unlink a task from its parent
+    /// Remove the parent-child relationship from a task
     Unlink { child_id: i32 },
-    /// Claim a task for an assignee
+    /// Claim a task and set an assignee
     Claim {
         local_id: i32,
+        /// Name of the assignee (e.g., agent name or username)
         #[arg(long)]
         by: Option<String>,
     },
-    /// Get task context for AI agents
+    /// Dump task details and linked file contents for AI context
     Context { local_id: i32 },
-    /// Synchronize DB and JSON
+    /// Synchronize the local database with partitioned JSON files
     Sync,
-    /// Move a linked file and update tasks
+    /// Move a linked file and update the path in all relevant tasks
     Mv { old_path: String, new_path: String },
-    /// Remove a task permanently
+    /// Permanently remove a task from the database and JSON
     Rm { local_id: i32 },
-    /// Clear all closed tasks permanently
+    /// Permanently remove all closed tasks
     Clear,
 }
 

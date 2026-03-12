@@ -43,7 +43,9 @@ cargo install --path .
    ```
 2. タスクを **追加** します。
    ```bash
-   lissue add "ログイン機能を実装する" -m "OAuth2を使用すること"
+   lissue add "メインタスク" -m "メインの説明"
+   # 親タスク ID: 1 に紐づくサブタスクを関連ファイルと共に作成
+   lissue add "サブタスク" -p 1 -f src/main.rs -f src/lib.rs
    # 引数なしで実行するとエディタが開きます
    ```
 3. タスクを **一覧表示** します。
@@ -61,20 +63,26 @@ cargo install --path .
 
 ## コマンドリファレンス
 
-| コマンド | 説明 |
-| :--- | :--- |
-| `lissue init` | `.lissue` ディレクトリとデータベースを初期化します。 |
-| `lissue add [TITLE]` | タスクを追加します。タイトル省略時はエディタを起動します。 |
-| `lissue list` | 一覧表示。`--format json` や `--tree`、フィルタリングが可能です。 |
-| `lissue next` | 次に着手すべきタスク（Open かつ 未割当）を取得します。 |
-| `lissue claim <ID>` | ステータスを In Progress にし、担当者を割り当てます。 |
-| `lissue close <ID>` | タスクを完了（Close）します。 |
-| `lissue open <ID>` | 完了したタスクを再開（Open）します。 |
-| `lissue link <ID> --to <PID>` | タスク間に親子関係を構築します。 |
-| `lissue context <ID>` | AI向けにタスク詳細と関連ファイルの内容を出力します。 |
-| `lissue mv <OLD> <NEW>` | ファイルを移動し、タスクに紐付くパスを一括更新します。 |
-| `lissue rm <ID>` | タスクを物理削除します。 |
-| `lissue clear` | クローズ済みのタスクをすべて一括削除します。 |
+| コマンド | オプション | 説明 |
+| :--- | :--- | :--- |
+| `lissue init` | | `.lissue` ディレクトリとデータベースを初期化します。 |
+| `lissue add [TITLE]` | `-m`, `-p`, `-f` | タスクを追加します。`-p`: 親ID, `-f`: 関連ファイル。 |
+| `lissue list` | `-f`, `-t`, `-s`, `-u` | 一覧表示。`-t`: ツリー, `-s`: 状態, `-u`: 未割当。 |
+| `lissue next` | | 次に着手すべきタスク（Open かつ 未割当）を取得します。 |
+| `lissue claim <ID>` | `--by` | ステータスを In Progress にし、担当者を割り当てます。 |
+| `lissue close <ID>` | | タスクを完了（Close）します。 |
+| `lissue open <ID>` | | 完了したタスクを再開（Open）します。 |
+| `lissue link <ID>` | `--to` | タスク間に親子関係を構築します。 |
+| `lissue context <ID>` | | AI向けにタスク詳細と関連ファイルの内容を出力します。 |
+| `lissue mv <OLD> <NEW>` | | ファイルを移動し、タスクに紐付くパスを一括更新します。 |
+| `lissue rm <ID>` | | タスクを物理削除します。 |
+| `lissue clear` | | クローズ済みのタスクをすべて一括削除します。 |
+
+## ヘルプとコマンドの探索
+
+すべてのコマンドとオプションは、以下の方法で確認できます：
+- `lissue help`: 利用可能なサブコマンドの一覧を表示します。
+- `lissue <COMMAND> --help`: 特定のサブコマンドの詳細なヘルプを表示します（例：`lissue add --help`）。
 
 ## 設定ファイル
 
