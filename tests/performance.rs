@@ -6,7 +6,7 @@ use tempfile::tempdir;
 #[ignore] // 長時間かかるため通常時は無視
 fn test_performance_scaling() {
     let scales = [100, 1000, 5000]; // 10000はJSON同期がボトルネックになる可能性があるため一旦5000まで
-    
+
     for &n in &scales {
         let dir = tempdir().unwrap();
         let root = dir.path().to_path_buf();
@@ -21,7 +21,12 @@ fn test_performance_scaling() {
             usecase.add_task(format!("Task {}", i), None, None).unwrap();
         }
         let duration = start.elapsed();
-        println!("Add {} tasks: {:?} (avg: {:?} / task)", n, duration, duration / n as u32);
+        println!(
+            "Add {} tasks: {:?} (avg: {:?} / task)",
+            n,
+            duration,
+            duration / n as u32
+        );
 
         // 2. List (Flat) Performance
         let start = Instant::now();

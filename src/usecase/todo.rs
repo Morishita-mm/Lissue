@@ -291,11 +291,7 @@ impl TodoUsecase {
         let title = lines[0].trim().to_string();
         let description = if lines.len() > 1 {
             let desc = lines[1..].join("\n").trim().to_string();
-            if desc.is_empty() {
-                None
-            } else {
-                Some(desc)
-            }
+            if desc.is_empty() { None } else { Some(desc) }
         } else {
             None
         };
@@ -426,7 +422,8 @@ mod tests {
         let file_path = "test_file.txt";
         fs::write(root.join(file_path), "File Content")?;
 
-        let mut task = usecase.add_task("Context Test".to_string(), Some("Desc".to_string()), None)?;
+        let mut task =
+            usecase.add_task("Context Test".to_string(), Some("Desc".to_string()), None)?;
         task.linked_files.push(file_path.to_string());
         usecase.repo.save(&task)?;
 
@@ -479,4 +476,3 @@ mod tests {
         Ok(())
     }
 }
-

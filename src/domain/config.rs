@@ -28,9 +28,7 @@ impl Default for Config {
             output: OutputConfig {
                 default_format: "human".to_string(),
             },
-            integration: IntegrationConfig {
-                git_mv_hook: true,
-            },
+            integration: IntegrationConfig { git_mv_hook: true },
             context: ContextConfig {
                 strategy: "paths_only".to_string(),
             },

@@ -17,8 +17,7 @@ impl YamlConfigRepository {
     pub fn save(&self, config: &Config) -> Result<()> {
         let file = File::create(&self.path)
             .with_context(|| format!("Failed to create config file: {:?}", self.path))?;
-        serde_yaml::to_writer(file, config)
-            .with_context(|| "Failed to write config to YAML")?;
+        serde_yaml::to_writer(file, config).with_context(|| "Failed to write config to YAML")?;
         Ok(())
     }
 
@@ -29,9 +28,8 @@ impl YamlConfigRepository {
         }
         let file = File::open(&self.path)
             .with_context(|| format!("Failed to open config file: {:?}", self.path))?;
-        let config = serde_yaml::from_reader(file)
-            .with_context(|| "Failed to parse config from YAML")?;
+        let config =
+            serde_yaml::from_reader(file).with_context(|| "Failed to parse config from YAML")?;
         Ok(config)
     }
-    }
-
+}
