@@ -54,6 +54,8 @@ pub enum Commands {
     Context { local_id: i32 },
     /// Synchronize DB and JSON
     Sync,
+    /// Move a linked file and update tasks
+    Mv { old_path: String, new_path: String },
 }
 
 pub fn print_tasks_human(tasks: &[Task], tree: bool) {

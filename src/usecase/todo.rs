@@ -223,6 +223,80 @@ impl TodoUsecase {
 
         Ok((task, context))
     }
+
+    pub fn save_task(&self, task: &Task) -> Result<()> {
+        self.repo.save(task)?;
+        self.sync_to_json()
+    }
+
+    pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
+        let config = self.config_repo.load()?;
+        let all_tasks = self.repo.find_all()?;
+        let mut updated = false;
+
+        for mut task in all_tasks {
+            let mut file_updated = false;
+            for file in task.linked_files.iter_mut() {
+                if file == old_path {
+                    *file = new_path.to_string();
+                    file_updated = true;
+                    updated = true;
+                }
+            }
+            if file_updated {
+                task.updated_at = Utc::now();
+                self.repo.save(&task)?;
+            }
+        }
+
+        if updated {
+            self.sync_to_json()?;
+        }
+
+        // 物理ファイルの移動
+        let old_full = self.root_dir.join(old_path);
+        let new_full = self.root_dir.join(new_path);
+
+        if config.integration.git_mv_hook {
+            let status = std::process::Command::new("git")
+                .arg("mv")
+                .arg(old_path)
+                .arg(new_path)
+                .current_dir(&self.root_dir)
+                .status();
+
+            if let Ok(s) = status {
+                if !s.success() {
+                    let _ = fs::rename(old_full, new_full);
+                }
+            } else {
+                let _ = fs::rename(old_full, new_full);
+            }
+        } else {
+            let _ = fs::rename(old_full, new_full);
+        }
+
+        Ok(())
+    }
+
+    pub fn parse_editor_content(content: &str) -> (String, Option<String>) {
+        let lines: Vec<&str> = content.lines().collect();
+        if lines.is_empty() {
+            return (String::new(), None);
+        }
+        let title = lines[0].trim().to_string();
+        let description = if lines.len() > 1 {
+            let desc = lines[1..].join("\n").trim().to_string();
+            if desc.is_empty() {
+                None
+            } else {
+                Some(desc)
+            }
+        } else {
+            None
+        };
+        (title, description)
+    }
 }
 
 #[cfg(test)]
@@ -356,6 +430,47 @@ mod tests {
         assert!(context.contains("Context Test"));
         assert!(context.contains("Desc"));
         assert!(context.contains("test_file.txt"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_editor_content() {
+        let content = "Task Title\nTask Description line 1\nline 2";
+        let (title, desc) = TodoUsecase::parse_editor_content(content);
+        assert_eq!(title, "Task Title");
+        assert_eq!(desc, Some("Task Description line 1\nline 2".to_string()));
+
+        let content_only_title = "Only Title";
+        let (title, desc) = TodoUsecase::parse_editor_content(content_only_title);
+        assert_eq!(title, "Only Title");
+        assert!(desc.is_none());
+    }
+
+    #[test]
+    fn test_move_file_updates_db() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root.clone())?;
+
+        // 1. タスク作成とファイル紐付け
+        let old_path = "old_file.txt";
+        let new_path = "new_file.txt";
+        fs::write(root.join(old_path), "content")?;
+
+        let mut task = usecase.add_task("Move Test".to_string(), None, None)?;
+        task.linked_files.push(old_path.to_string());
+        usecase.repo.save(&task)?;
+
+        // 2. move_file を実行
+        usecase.move_file(old_path, new_path)?;
+
+        // 3. 全タスクをチェックし、古いパスが新しいパスに置換されているか確認
+        let tasks = usecase.list_tasks()?;
+        assert_eq!(tasks[0].linked_files[0], new_path);
+        assert!(root.join(new_path).exists());
+        assert!(!root.join(old_path).exists());
 
         Ok(())
     }

@@ -1,9 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use rust_todo_cli::domain;
 use rust_todo_cli::presentation::{Cli, Commands};
 use rust_todo_cli::usecase::TodoUsecase;
 use std::env;
+use std::fs;
+use std::io::Read;
+use std::process::Command;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -18,16 +21,27 @@ fn main() -> Result<()> {
             title,
             message,
             parent,
-            files: _,
+            files,
         } => {
             let usecase = TodoUsecase::new(root_dir)?;
-            let final_title = if let Some(t) = title {
-                t
+            let (final_title, final_message) = if let Some(t) = title {
+                (t, message)
             } else {
-                // TODO: EDITOR起動ロジック
-                return Err(anyhow::anyhow!("Title is required currently."));
+                let content = run_editor()?;
+                TodoUsecase::parse_editor_content(&content)
             };
-            let task = usecase.add_task(final_title, message, parent)?;
+
+            if final_title.is_empty() {
+                return Err(anyhow::anyhow!("Title is required."));
+            }
+
+            let mut task = usecase.add_task(final_title, final_message, parent)?;
+            if !files.is_empty() {
+                let mut linked = task.linked_files.clone();
+                linked.extend(files);
+                task.linked_files = linked;
+                usecase.save_task(&task)?;
+            }
             println!("Task created with ID: {}", task.local_id.unwrap_or(0));
         }
         Commands::List { format, tree } => {
@@ -62,7 +76,11 @@ fn main() -> Result<()> {
         Commands::Claim { local_id, by } => {
             let usecase = TodoUsecase::new(root_dir)?;
             usecase.claim_task(local_id, by.clone())?;
-            println!("Task {} claimed by {}.", local_id, by.unwrap_or_else(|| "anonymous".to_string()));
+            println!(
+                "Task {} claimed by {}.",
+                local_id,
+                by.unwrap_or_else(|| "anonymous".to_string())
+            );
         }
         Commands::Context { local_id } => {
             let usecase = TodoUsecase::new(root_dir)?;
@@ -74,7 +92,28 @@ fn main() -> Result<()> {
             usecase.sync()?;
             println!("Synchronized database with tasks.json.");
         }
+        Commands::Mv { old_path, new_path } => {
+            let usecase = TodoUsecase::new(root_dir)?;
+            usecase.move_file(&old_path, &new_path)?;
+            println!("Moved {} to {} and updated tasks.", old_path, new_path);
+        }
     }
 
     Ok(())
+}
+
+fn run_editor() -> Result<String> {
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let temp_file = tempfile::NamedTempFile::new()?;
+    let temp_path = temp_file.path();
+
+    let status = Command::new(editor).arg(temp_path).status()?;
+
+    if !status.success() {
+        return Err(anyhow::anyhow!("Editor failed to exit successfully."));
+    }
+
+    let mut content = String::new();
+    fs::File::open(temp_path)?.read_to_string(&mut content)?;
+    Ok(content)
 }
