@@ -1,0 +1,24 @@
+[
+  {
+    "local_id": 1,
+    "global_id": "1dfc869f-fc31-43aa-98ea-3ab1ff0d42a7",
+    "title": "First Task",
+    "description": "This is the first task",
+    "status": "Open",
+    "parent_global_id": null,
+    "linked_files": [],
+    "created_at": "2026-03-12T16:08:32.557133Z",
+    "updated_at": "2026-03-12T16:08:32.557133Z"
+  },
+  {
+    "local_id": 2,
+    "global_id": "47c0838f-a69f-4337-b494-bee60f2a5972",
+    "title": "Child Task",
+    "description": null,
+    "status": "Open",
+    "parent_global_id": "1dfc869f-fc31-43aa-98ea-3ab1ff0d42a7",
+    "linked_files": [],
+    "created_at": "2026-03-12T16:08:47.853815Z",
+    "updated_at": "2026-03-12T16:08:47.853815Z"
+  }
+]
