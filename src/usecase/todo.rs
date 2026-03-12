@@ -195,7 +195,7 @@ impl TodoUsecase {
             .find_by_local_id(id)?
             .ok_or_else(|| anyhow!("Task not found: {}", id))?;
 
-        let config = self.config_repo.load()?;
+        let config = self.get_config()?;
         let mut context = String::new();
 
         context.push_str(&format!("Title: {}\n", task.title));
@@ -222,6 +222,10 @@ impl TodoUsecase {
         }
 
         Ok((task, context))
+    }
+
+    pub fn get_config(&self) -> Result<Config> {
+        self.config_repo.load()
     }
 
     pub fn save_task(&self, task: &Task) -> Result<()> {

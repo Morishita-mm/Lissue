@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use rust_todo_cli::domain;
 use rust_todo_cli::presentation::{Cli, Commands};
@@ -46,8 +46,10 @@ fn main() -> Result<()> {
         }
         Commands::List { format, tree } => {
             let usecase = TodoUsecase::new(root_dir)?;
+            let config = usecase.get_config()?;
+            let final_format = format.unwrap_or(config.output.default_format);
             let tasks = usecase.list_tasks()?;
-            if format == "json" {
+            if final_format == "json" {
                 println!("{}", serde_json::to_string_pretty(&tasks)?);
             } else {
                 rust_todo_cli::presentation::cli::print_tasks_human(&tasks, tree);

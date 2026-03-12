@@ -27,8 +27,8 @@ pub enum Commands {
     },
     /// List all tasks
     List {
-        #[arg(short, long, default_value = "human")]
-        format: String,
+        #[arg(short, long)]
+        format: Option<String>,
         #[arg(short, long)]
         tree: bool,
     },
