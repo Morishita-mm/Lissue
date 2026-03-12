@@ -12,8 +12,8 @@ use std::path::PathBuf;
 pub struct TodoUsecase {
     repo: SqliteRepository,
     json_repo: JsonRepository,
-    _config_repo: YamlConfigRepository,
-    _root_dir: PathBuf,
+    config_repo: YamlConfigRepository,
+    root_dir: PathBuf,
 }
 
 impl TodoUsecase {
@@ -34,8 +34,8 @@ impl TodoUsecase {
         Ok(Self {
             repo,
             json_repo,
-            _config_repo: config_repo,
-            _root_dir: root_dir,
+            config_repo,
+            root_dir,
         })
     }
 
@@ -175,6 +175,54 @@ impl TodoUsecase {
         self.repo.save(&task)?;
         self.sync_to_json()
     }
+
+    pub fn claim_task(&self, id: i32, assignee: Option<String>) -> Result<()> {
+        let mut task = self
+            .repo
+            .find_by_local_id(id)?
+            .ok_or_else(|| anyhow!("Task not found: {}", id))?;
+
+        task.status = Status::InProgress;
+        task.assignee = assignee;
+        task.updated_at = Utc::now();
+        self.repo.save(&task)?;
+        self.sync_to_json()
+    }
+
+    pub fn get_task_context(&self, id: i32) -> Result<(Task, String)> {
+        let task = self
+            .repo
+            .find_by_local_id(id)?
+            .ok_or_else(|| anyhow!("Task not found: {}", id))?;
+
+        let config = self.config_repo.load()?;
+        let mut context = String::new();
+
+        context.push_str(&format!("Title: {}\n", task.title));
+        if let Some(desc) = &task.description {
+            context.push_str(&format!("Description: {}\n", desc));
+        }
+        context.push_str(&format!("Status: {}\n", task.status));
+        if let Some(assignee) = &task.assignee {
+            context.push_str(&format!("Assignee: {}\n", assignee));
+        }
+        context.push_str("\nLinked Files:\n");
+
+        for file_path in &task.linked_files {
+            context.push_str(&format!("- {}\n", file_path));
+            if config.context.strategy == "raw_content" {
+                let full_path = self.root_dir.join(file_path);
+                if full_path.exists() {
+                    let content = fs::read_to_string(full_path)?;
+                    context.push_str("```\n");
+                    context.push_str(&content);
+                    context.push_str("\n```\n");
+                }
+            }
+        }
+
+        Ok((task, context))
+    }
 }
 
 #[cfg(test)]
@@ -227,7 +275,7 @@ mod tests {
         let usecase = TodoUsecase::new(root.clone())?;
 
         // 1. タスク追加
-        let task = usecase.add_task("Base Task".to_string(), None, None)?;
+        let _task = usecase.add_task("Base Task".to_string(), None, None)?;
 
         // 2. JSONを直接書き換えて古いデータにする
         let mut tasks_in_json = usecase.json_repo.load_all()?;
@@ -253,10 +301,10 @@ mod tests {
         assert_eq!(tasks[0].title, "New JSON");
 
         Ok(())
-        }
+    }
 
-        #[test]
-        fn test_assignee_preservation() -> Result<()> {
+    #[test]
+    fn test_assignee_preservation() -> Result<()> {
         let dir = tempdir()?;
         let root = dir.path().to_path_buf();
         TodoUsecase::init(root.clone())?;
@@ -270,6 +318,46 @@ mod tests {
         assert_eq!(retrieved.assignee, Some("AI-Agent".to_string()));
 
         Ok(())
-        }
-        }
+    }
+
+    #[test]
+    fn test_claim_task() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root)?;
+
+        usecase.add_task("Claim Test".to_string(), None, None)?;
+        usecase.claim_task(1, Some("Agent-1".to_string()))?;
+
+        let task = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(task.status, Status::InProgress);
+        assert_eq!(task.assignee, Some("Agent-1".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_task_context() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root.clone())?;
+
+        // 関連ファイルの作成
+        let file_path = "test_file.txt";
+        fs::write(root.join(file_path), "File Content")?;
+
+        let mut task = usecase.add_task("Context Test".to_string(), Some("Desc".to_string()), None)?;
+        task.linked_files.push(file_path.to_string());
+        usecase.repo.save(&task)?;
+
+        let (_, context) = usecase.get_task_context(1)?;
+        assert!(context.contains("Context Test"));
+        assert!(context.contains("Desc"));
+        assert!(context.contains("test_file.txt"));
+
+        Ok(())
+    }
+}
 

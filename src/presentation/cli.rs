@@ -44,6 +44,14 @@ pub enum Commands {
     },
     /// Unlink a task from its parent
     Unlink { child_id: i32 },
+    /// Claim a task for an assignee
+    Claim {
+        local_id: i32,
+        #[arg(long)]
+        by: Option<String>,
+    },
+    /// Get task context for AI agents
+    Context { local_id: i32 },
     /// Synchronize DB and JSON
     Sync,
 }
@@ -52,10 +60,7 @@ pub fn print_tasks_human(tasks: &[Task], tree: bool) {
     if tree {
         print_task_tree(tasks);
     } else {
-        println!(
-            "{:<5} {:<10} {:<30} {:<20}",
-            "ID", "Status", "Title", "Updated At"
-        );
+        println!("{:<5} {:<10} {:<30} {:<20}", "ID", "Status", "Title", "Updated At");
         println!("{}", "-".repeat(70));
         for task in tasks {
             println!(
@@ -74,10 +79,7 @@ fn print_task_tree(tasks: &[Task]) {
     let mut children_map: HashMap<Option<Uuid>, Vec<Uuid>> = HashMap::new();
 
     for task in tasks {
-        children_map
-            .entry(task.parent_global_id)
-            .or_default()
-            .push(task.global_id);
+        children_map.entry(task.parent_global_id).or_default().push(task.global_id);
     }
 
     fn print_node(
@@ -88,18 +90,8 @@ fn print_task_tree(tasks: &[Task]) {
     ) {
         if let Some(task) = tasks_by_id.get(&id) {
             let prefix = "  ".repeat(indent);
-            let status_mark = if task.status == Status::Close {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            println!(
-                "{}{} {} (ID: {})",
-                prefix,
-                status_mark,
-                task.title,
-                task.local_id.unwrap_or(0)
-            );
+            let status_mark = if task.status == Status::Close { "[x]" } else { "[ ]" };
+            println!("{}{} {} (ID: {})", prefix, status_mark, task.title, task.local_id.unwrap_or(0));
 
             if let Some(children) = children_map.get(&Some(id)) {
                 for child_id in children {

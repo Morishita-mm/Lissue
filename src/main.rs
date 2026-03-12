@@ -59,6 +59,16 @@ fn main() -> Result<()> {
             usecase.unlink_task(child_id)?;
             println!("Unlinked task {}.", child_id);
         }
+        Commands::Claim { local_id, by } => {
+            let usecase = TodoUsecase::new(root_dir)?;
+            usecase.claim_task(local_id, by.clone())?;
+            println!("Task {} claimed by {}.", local_id, by.unwrap_or_else(|| "anonymous".to_string()));
+        }
+        Commands::Context { local_id } => {
+            let usecase = TodoUsecase::new(root_dir)?;
+            let (_, context) = usecase.get_task_context(local_id)?;
+            println!("{}", context);
+        }
         Commands::Sync => {
             let usecase = TodoUsecase::new(root_dir)?;
             usecase.sync()?;
