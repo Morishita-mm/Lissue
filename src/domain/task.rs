@@ -40,6 +40,7 @@ pub struct Task {
     pub title: String,
     pub description: Option<String>,
     pub status: Status,
+    pub assignee: Option<String>,
     pub parent_global_id: Option<Uuid>,
     pub linked_files: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -55,6 +56,7 @@ impl Task {
             title,
             description,
             status: Status::Open,
+            assignee: None,
             parent_global_id,
             linked_files: Vec::new(),
             created_at: now,
@@ -82,6 +84,7 @@ mod tests {
         let task = Task::new(title.clone(), None, None);
         assert_eq!(task.title, title);
         assert_eq!(task.status, Status::Open);
+        assert!(task.assignee.is_none());
         assert!(task.local_id.is_none());
         assert!(task.linked_files.is_empty());
     }

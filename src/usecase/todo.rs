@@ -253,5 +253,23 @@ mod tests {
         assert_eq!(tasks[0].title, "New JSON");
 
         Ok(())
-    }
-}
+        }
+
+        #[test]
+        fn test_assignee_preservation() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root)?;
+
+        let mut task = usecase.add_task("Assignee Test".to_string(), None, None)?;
+        task.assignee = Some("AI-Agent".to_string());
+        usecase.repo.save(&task)?;
+
+        let retrieved = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(retrieved.assignee, Some("AI-Agent".to_string()));
+
+        Ok(())
+        }
+        }
+

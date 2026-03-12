@@ -30,6 +30,7 @@ impl SqliteRepository {
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL,
+                assignee TEXT,
                 parent_global_id TEXT,
                 linked_files TEXT,
                 created_at DATETIME NOT NULL,
@@ -56,6 +57,7 @@ impl SqliteRepository {
             title: row.get("title")?,
             description: row.get("description")?,
             status: Status::from(row.get::<_, String>("status")?),
+            assignee: row.get("assignee")?,
             parent_global_id: parent_global_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
             linked_files,
             created_at: row.get("created_at")?,
@@ -71,12 +73,13 @@ impl TaskRepository for SqliteRepository {
 
         self.conn.execute(
             "INSERT INTO tasks (
-                global_id, title, description, status, parent_global_id, linked_files, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                global_id, title, description, status, assignee, parent_global_id, linked_files, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT(global_id) DO UPDATE SET
                 title = excluded.title,
                 description = excluded.description,
                 status = excluded.status,
+                assignee = excluded.assignee,
                 parent_global_id = excluded.parent_global_id,
                 linked_files = excluded.linked_files,
                 updated_at = excluded.updated_at",
@@ -85,6 +88,7 @@ impl TaskRepository for SqliteRepository {
                 task.title,
                 task.description,
                 task.status.to_string(),
+                task.assignee,
                 parent_global_id,
                 linked_files_json,
                 task.created_at,
