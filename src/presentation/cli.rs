@@ -56,6 +56,10 @@ pub enum Commands {
     Sync,
     /// Move a linked file and update tasks
     Mv { old_path: String, new_path: String },
+    /// Remove a task permanently
+    Rm { local_id: i32 },
+    /// Clear all closed tasks permanently
+    Clear,
 }
 
 pub fn print_tasks_human(tasks: &[Task], tree: bool) {

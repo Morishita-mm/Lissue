@@ -255,6 +255,28 @@ impl TodoUsecase {
         self.json_repo.save_task(task)
     }
 
+    pub fn delete_task(&self, id: i32) -> Result<()> {
+        if let Some(task) = self.repo.find_by_local_id(id)? {
+            self.repo.delete(id)?;
+            self.json_repo.delete_task(&task.global_id)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_closed_tasks(&self) -> Result<usize> {
+        let tasks = self.repo.find_all()?;
+        let mut count = 0;
+        for task in tasks {
+            if task.status == Status::Close {
+                if let Some(local_id) = task.local_id {
+                    self.delete_task(local_id)?;
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
+
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
         let old_full = self.validate_path(old_path)?;
         let new_full = self.validate_path(new_path)?;
@@ -505,6 +527,47 @@ mod tests {
         // Path traversal
         assert!(usecase.validate_path("../outside.txt").is_err());
         assert!(usecase.validate_path("/etc/passwd").is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_task() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root)?;
+
+        let task = usecase.add_task("To be deleted".to_string(), None, None)?;
+        let global_id = task.global_id;
+
+        usecase.delete_task(1)?;
+
+        assert!(usecase.repo.find_by_local_id(1)?.is_none());
+        // JSONファイルも消えているか（リポジトリ経由で全ロードして確認）
+        let all_json = usecase.json_repo.load_all()?;
+        assert!(!all_json.iter().any(|t| t.global_id == global_id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_clear_closed_tasks() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root)?;
+
+        usecase.add_task("Task 1".to_string(), None, None)?; // Open
+        usecase.add_task("Task 2".to_string(), None, None)?; // Open
+        usecase.update_status(2, Status::Close)?; // Close Task 2
+
+        let cleared_count = usecase.clear_closed_tasks()?;
+        assert_eq!(cleared_count, 1);
+
+        let tasks = usecase.list_tasks()?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Task 1");
 
         Ok(())
     }

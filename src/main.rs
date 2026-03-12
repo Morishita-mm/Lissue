@@ -99,6 +99,16 @@ fn main() -> Result<()> {
             usecase.move_file(&old_path, &new_path)?;
             println!("Moved {} to {} and updated tasks.", old_path, new_path);
         }
+        Commands::Rm { local_id } => {
+            let usecase = TodoUsecase::new(root_dir)?;
+            usecase.delete_task(local_id)?;
+            println!("Task {} removed permanently.", local_id);
+        }
+        Commands::Clear => {
+            let usecase = TodoUsecase::new(root_dir)?;
+            let count = usecase.clear_closed_tasks()?;
+            println!("Cleared {} closed tasks.", count);
+        }
     }
 
     Ok(())
