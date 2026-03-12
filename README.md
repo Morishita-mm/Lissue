@@ -28,49 +28,49 @@ cargo install --path .
 
 1. **Initialize** the repository in your project root:
    ```bash
-   todo init
+   mytodo init
    ```
 2. **Add** a task:
    ```bash
-   todo add "Implement login feature" -m "Use OAuth2"
-   # Or just 'todo add' to open your $EDITOR
+   mytodo add "Implement login feature" -m "Use OAuth2"
+   # Or just 'mytodo add' to open your $EDITOR
    ```
 3. **List** tasks:
    ```bash
-   todo list --tree
+   mytodo list --tree
    ```
 4. **Claim** a task (for AI agents or team members):
    ```bash
-   todo claim 1 --by "Agent-Alpha"
+   mytodo claim 1 --by "Agent-Alpha"
    ```
 5. **Sync** with Git (Apply merged JSON files to your local database):
    ```bash
-   todo sync
+   mytodo sync
    ```
 
 ## Command Reference
 
 | Command | Description |
 | :--- | :--- |
-| `todo init` | Initialize `.mytodo` directory and database. |
-| `todo add [TITLE]` | Add a new task. Opens editor if title is omitted. |
-| `todo list` | List tasks. Supports `--format json`, `--tree`, and filters. |
-| `todo next` | Get the next available task (Open & Unassigned). |
-| `todo claim <ID>` | Mark task as In Progress and assign to yourself/agent. |
-| `todo close <ID>` | Close a task. |
-| `todo open <ID>` | Reopen a closed task. |
-| `todo link <ID> --to <PID>` | Create a parent-child relationship. |
-| `todo context <ID>` | Dump task details and linked file contents for AI. |
-| `todo mv <OLD> <NEW>` | Move a file and update all linked tasks. |
-| `todo rm <ID>` | Permanently remove a task. |
-| `todo clear` | Permanently remove all closed tasks. |
+| `mytodo init` | Initialize `.mytodo` directory and database. |
+| `mytodo add [TITLE]` | Add a new task. Opens editor if title is omitted. |
+| `mytodo list` | List tasks. Supports `--format json`, `--tree`, and filters. |
+| `mytodo next` | Get the next available task (Open & Unassigned). |
+| `mytodo claim <ID>` | Mark task as In Progress and assign to yourself/agent. |
+| `mytodo close <ID>` | Close a task. |
+| `mytodo open <ID>` | Reopen a closed task. |
+| `mytodo link <ID> --to <PID>` | Create a parent-child relationship. |
+| `mytodo context <ID>` | Dump task details and linked file contents for AI. |
+| `mytodo mv <OLD> <NEW>` | Move a file and update all linked tasks. |
+| `mytodo rm <ID>` | Permanently remove a task. |
+| `mytodo clear` | Permanently remove all closed tasks. |
 
 ## Configuration
 
 Settings are stored in `.mytodo/config.yaml`:
 - `output.default_format`: `human` or `json`
 - `output.auto_sync`: Enable/disable implicit sync during `list` or `next`.
-- `integration.git_mv_hook`: Use `git mv` during `todo mv`.
+- `integration.git_mv_hook`: Use `git mv` during `mytodo mv`.
 - `context.strategy`: `paths_only` or `raw_content`.
 
 ## License

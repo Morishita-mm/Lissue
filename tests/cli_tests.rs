@@ -9,7 +9,7 @@ fn test_cli_lifecycle() {
     let root = dir.path();
 
     // 1. 未初期化状態での add (エラーになるべき)
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root)
         .arg("add")
         .arg("Should Fail")
@@ -18,7 +18,7 @@ fn test_cli_lifecycle() {
         .stderr(predicate::str::contains("Not initialized"));
 
     // 2. init 実行
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root)
         .arg("init")
         .assert()
@@ -28,7 +28,7 @@ fn test_cli_lifecycle() {
     assert!(root.join(".mytodo/data.db").exists());
 
     // 3. task 追加
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root)
         .arg("add")
         .arg("Test CLI Task")
@@ -39,7 +39,7 @@ fn test_cli_lifecycle() {
         .stdout(predicate::str::contains("Task created with ID: 1"));
 
     // 4. list 表示
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root)
         .arg("list")
         .assert()
@@ -48,7 +48,7 @@ fn test_cli_lifecycle() {
         .stdout(predicate::str::contains("Open"));
 
     // 5. close 実行
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root)
         .arg("close")
         .arg("1")
@@ -57,7 +57,7 @@ fn test_cli_lifecycle() {
         .stdout(predicate::str::contains("Task 1 closed"));
 
     // 6. list (再度確認)
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root)
         .arg("list")
         .assert()
@@ -65,7 +65,7 @@ fn test_cli_lifecycle() {
         .stdout(predicate::str::contains("Close"));
 
     // 7. sync 実行 (tasks ディレクトリの確認)
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root).arg("sync").assert().success();
 
     assert!(root.join(".mytodo/tasks").is_dir());
@@ -78,7 +78,7 @@ fn test_tree_display() {
     let root = dir.path();
 
     // Init
-    Command::cargo_bin("rust-todo-cli")
+    Command::cargo_bin("mytodo")
         .unwrap()
         .current_dir(root)
         .arg("init")
@@ -86,7 +86,7 @@ fn test_tree_display() {
         .success();
 
     // Add Parent
-    Command::cargo_bin("rust-todo-cli")
+    Command::cargo_bin("mytodo")
         .unwrap()
         .current_dir(root)
         .arg("add")
@@ -95,7 +95,7 @@ fn test_tree_display() {
         .success();
 
     // Add Child
-    Command::cargo_bin("rust-todo-cli")
+    Command::cargo_bin("mytodo")
         .unwrap()
         .current_dir(root)
         .arg("add")
@@ -106,7 +106,7 @@ fn test_tree_display() {
         .success();
 
     // List Tree
-    let mut cmd = Command::cargo_bin("rust-todo-cli").unwrap();
+    let mut cmd = Command::cargo_bin("mytodo").unwrap();
     cmd.current_dir(root)
         .arg("list")
         .arg("--tree")

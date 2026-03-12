@@ -1,4 +1,0 @@
-output:
-  default_format: human
-integration:
-  git_mv_hook: true
