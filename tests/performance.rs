@@ -1,4 +1,4 @@
-use rust_todo_cli::usecase::TodoUsecase;
+use rust_todo_cli::usecase::todo::{TaskFilter, TodoUsecase};
 use std::time::Instant;
 use tempfile::tempdir;
 
@@ -30,7 +30,7 @@ fn test_performance_scaling() {
 
         // 2. List (Flat) Performance
         let start = Instant::now();
-        let tasks = usecase.list_tasks().unwrap();
+        let tasks = usecase.list_tasks(TaskFilter::default()).unwrap();
         let duration = start.elapsed();
         println!("List (Flat) {} tasks: {:?}", n, duration);
 

@@ -10,6 +10,12 @@ use lexiclean::Lexiclean;
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Default)]
+pub struct TaskFilter {
+    pub status: Option<Status>,
+    pub unassigned: bool,
+}
+
 pub struct TodoUsecase {
     repo: SqliteRepository,
     json_repo: JsonRepository,
@@ -80,7 +86,6 @@ impl TodoUsecase {
             config_repo.save(&Config::default())?;
         }
 
-        // Initialize SQLite DB
         let _ = SqliteRepository::new(dot_mytodo.join("data.db"))?;
 
         Ok(())
@@ -127,8 +132,23 @@ impl TodoUsecase {
         }
     }
 
-    pub fn list_tasks(&self) -> Result<Vec<Task>> {
-        self.repo.find_all()
+    pub fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>> {
+        let tasks = self.repo.find_all()?;
+        let filtered = tasks
+            .into_iter()
+            .filter(|t| {
+                if let Some(status) = filter.status {
+                    if t.status != status {
+                        return false;
+                    }
+                }
+                if filter.unassigned && t.assignee.is_some() {
+                    return false;
+                }
+                true
+            })
+            .collect();
+        Ok(filtered)
     }
 
     pub fn update_status(&self, local_id: i32, status: Status) -> Result<()> {
@@ -248,6 +268,20 @@ impl TodoUsecase {
 
     pub fn get_config(&self) -> Result<Config> {
         self.config_repo.load()
+    }
+
+    pub fn get_next_task(&self) -> Result<Option<Task>> {
+        let config = self.get_config()?;
+        if config.output.auto_sync {
+            let _ = self.sync();
+        }
+
+        let tasks = self.list_tasks(TaskFilter {
+            status: Some(Status::Open),
+            unassigned: true,
+        })?;
+
+        Ok(tasks.into_iter().next())
     }
 
     pub fn save_task(&self, task: &Task) -> Result<()> {
@@ -379,7 +413,7 @@ mod tests {
         usecase.add_task("Test 1".to_string(), None, None)?;
         usecase.add_task("Test 2".to_string(), Some("Desc".to_string()), None)?;
 
-        let tasks = usecase.list_tasks()?;
+        let tasks = usecase.list_tasks(TaskFilter::default())?;
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].title, "Test 1");
         assert_eq!(tasks[1].description, Some("Desc".to_string()));
@@ -403,7 +437,7 @@ mod tests {
         usecase.json_repo.save_all(&tasks_in_json)?;
 
         usecase.sync()?;
-        let tasks = usecase.list_tasks()?;
+        let tasks = usecase.list_tasks(TaskFilter::default())?;
         assert_eq!(tasks[0].title, "Base Task");
 
         let mut tasks_in_json = usecase.json_repo.load_all()?;
@@ -412,7 +446,7 @@ mod tests {
         usecase.json_repo.save_all(&tasks_in_json)?;
 
         usecase.sync()?;
-        let tasks = usecase.list_tasks()?;
+        let tasks = usecase.list_tasks(TaskFilter::default())?;
         assert_eq!(tasks[0].title, "New JSON");
 
         Ok(())
@@ -505,7 +539,7 @@ mod tests {
 
         usecase.move_file(old_path, new_path)?;
 
-        let tasks = usecase.list_tasks()?;
+        let tasks = usecase.list_tasks(TaskFilter::default())?;
         assert_eq!(tasks[0].linked_files[0], new_path);
         assert!(root.join(new_path).exists());
         assert!(!root.join(old_path).exists());
@@ -532,6 +566,73 @@ mod tests {
     }
 
     #[test]
+    fn test_list_tasks_filtering() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root)?;
+
+        usecase.add_task("Task 1".to_string(), None, None)?; // Open, Unassigned
+        let mut t2 = usecase.add_task("Task 2".to_string(), None, None)?;
+        t2.status = Status::Close;
+        usecase.save_task(&t2)?; // Close, Unassigned
+
+        let mut t3 = usecase.add_task("Task 3".to_string(), None, None)?;
+        t3.assignee = Some("Agent".to_string());
+        usecase.save_task(&t3)?; // Open, Assigned
+
+        // 1. Status Filter
+        let open_tasks = usecase.list_tasks(TaskFilter {
+            status: Some(Status::Open),
+            ..Default::default()
+        })?;
+        assert_eq!(open_tasks.len(), 2);
+
+        // 2. Unassigned Filter
+        let unassigned_tasks = usecase.list_tasks(TaskFilter {
+            unassigned: true,
+            ..Default::default()
+        })?;
+        assert_eq!(unassigned_tasks.len(), 2);
+        assert!(unassigned_tasks.iter().all(|t| t.assignee.is_none()));
+
+        // 3. Combined Filter
+        let next_tasks = usecase.list_tasks(TaskFilter {
+            status: Some(Status::Open),
+            unassigned: true,
+        })?;
+        assert_eq!(next_tasks.len(), 1);
+        assert_eq!(next_tasks[0].title, "Task 1");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_next_task() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root)?;
+
+        // 最初はNone
+        assert!(usecase.get_next_task()?.is_none());
+
+        // タスク追加
+        usecase.add_task("Next 1".to_string(), None, None)?;
+        usecase.add_task("Next 2".to_string(), None, None)?;
+
+        let next = usecase.get_next_task()?.unwrap();
+        assert_eq!(next.title, "Next 1");
+
+        // クレームすると次が返る
+        usecase.claim_task(1, Some("Agent".to_string()))?;
+        let next = usecase.get_next_task()?.unwrap();
+        assert_eq!(next.title, "Next 2");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_delete_task() -> Result<()> {
         let dir = tempdir()?;
         let root = dir.path().to_path_buf();
@@ -544,7 +645,6 @@ mod tests {
         usecase.delete_task(1)?;
 
         assert!(usecase.repo.find_by_local_id(1)?.is_none());
-        // JSONファイルも消えているか（リポジトリ経由で全ロードして確認）
         let all_json = usecase.json_repo.load_all()?;
         assert!(!all_json.iter().any(|t| t.global_id == global_id));
 
@@ -565,7 +665,7 @@ mod tests {
         let cleared_count = usecase.clear_closed_tasks()?;
         assert_eq!(cleared_count, 1);
 
-        let tasks = usecase.list_tasks()?;
+        let tasks = usecase.list_tasks(TaskFilter::default())?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title, "Task 1");
 

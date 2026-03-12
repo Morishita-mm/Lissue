@@ -10,6 +10,7 @@ pub struct Config {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OutputConfig {
     pub default_format: String, // human or json
+    pub auto_sync: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -27,6 +28,7 @@ impl Default for Config {
         Self {
             output: OutputConfig {
                 default_format: "human".to_string(),
+                auto_sync: true,
             },
             integration: IntegrationConfig { git_mv_hook: true },
             context: ContextConfig {

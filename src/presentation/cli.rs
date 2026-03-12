@@ -31,7 +31,13 @@ pub enum Commands {
         format: Option<String>,
         #[arg(short, long)]
         tree: bool,
+        #[arg(short, long)]
+        status: Option<Status>,
+        #[arg(short, long)]
+        unassigned: bool,
     },
+    /// Get the next task to work on
+    Next,
     /// Close a task
     Close { local_id: i32 },
     /// Open a task

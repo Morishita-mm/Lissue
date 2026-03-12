@@ -44,15 +44,32 @@ fn main() -> Result<()> {
             }
             println!("Task created with ID: {}", task.local_id.unwrap_or(0));
         }
-        Commands::List { format, tree } => {
+        Commands::List {
+            format,
+            tree,
+            status,
+            unassigned,
+        } => {
             let usecase = TodoUsecase::new(root_dir)?;
             let config = usecase.get_config()?;
             let final_format = format.unwrap_or(config.output.default_format);
-            let tasks = usecase.list_tasks()?;
+            let tasks = usecase.list_tasks(rust_todo_cli::usecase::todo::TaskFilter {
+                status,
+                unassigned,
+            })?;
             if final_format == "json" {
                 println!("{}", serde_json::to_string_pretty(&tasks)?);
             } else {
                 rust_todo_cli::presentation::cli::print_tasks_human(&tasks, tree);
+            }
+        }
+        Commands::Next => {
+            let usecase = TodoUsecase::new(root_dir)?;
+            if let Some(task) = usecase.get_next_task()? {
+                let tasks = vec![task];
+                rust_todo_cli::presentation::cli::print_tasks_human(&tasks, false);
+            } else {
+                println!("No tasks available.");
             }
         }
         Commands::Close { local_id } => {
