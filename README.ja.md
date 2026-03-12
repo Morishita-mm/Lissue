@@ -1,5 +1,6 @@
 # lissue
 
+[![Crates.io](https://img.shields.io/crates/v/lissue.svg)](https://crates.io/crates/lissue)
 **lissue**（Local Issueの略称）は、開発者とAIエージェントのために設計された、GitフレンドリーなローカルTODO管理CLIツール。SQLite（高速なローカル操作）とJSON（Gitによる共有）のハイブリッドストレージを採用しています。
 
 ![Demo](docs/demo.gif)
@@ -19,6 +20,12 @@
 
 ## インストール
 
+### crates.io からインストール (推奨)
+```bash
+cargo install lissue
+```
+
+### ソースからビルド
 ```bash
 # リポジトリをクローン
 git clone https://github.com/Morishita-mm/rust-todo-cli
