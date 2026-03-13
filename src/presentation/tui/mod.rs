@@ -145,14 +145,10 @@ impl TuiApp {
                 self.input_buffer = String::new();
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if !self.tasks.is_empty() && self.selected_index < self.tasks.len() - 1 {
-                    self.selected_index += 1;
-                }
+                self.move_selection(1);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if self.selected_index > 0 {
-                    self.selected_index -= 1;
-                }
+                self.move_selection(-1);
             }
             KeyCode::Char('h') | KeyCode::Left => {
                 self.cycle_tab(false)?;
@@ -176,6 +172,20 @@ impl TuiApp {
             _ => {}
         }
         Ok(false)
+    }
+
+    fn move_selection(&mut self, delta: i32) {
+        if self.tasks.is_empty() {
+            self.selected_index = 0;
+            return;
+        }
+        
+        let new_idx = if delta > 0 {
+            self.selected_index.saturating_add(delta as usize).min(self.tasks.len() - 1)
+        } else {
+            self.selected_index.saturating_sub(delta.unsigned_abs() as usize)
+        };
+        self.selected_index = new_idx;
     }
 
     fn handle_add_key(&mut self, code: KeyCode) -> Result<bool> {
@@ -296,39 +306,10 @@ impl TuiApp {
         let (tab_area, list_area, detail_area, file_area, help_area) = layout::get_layout(f.area());
 
         // [1] Status / Tabs
-        let titles = vec![" [1] Open ", " [2] Doing ", " [3] Pending ", " [4] Done "];
-        let current_idx = match self.active_tab {
-            Status::Open => 0,
-            Status::InProgress => 1,
-            Status::Pending => 2,
-            Status::Close => 3,
-        };
-        
-        let tabs = ratatui::widgets::Tabs::new(titles)
-            .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Status "))
-            .select(current_idx)
-            .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
-        f.render_widget(tabs, tab_area);
+        widgets::render_tabs(f, tab_area, self.active_tab);
 
         // [2] Task List
-        let list_items: Vec<ratatui::widgets::ListItem> = self.tasks.iter().enumerate().map(|(i, t)| {
-            let style = if i == self.selected_index {
-                Style::default().bg(Color::DarkGray).fg(Color::Cyan)
-            } else {
-                Style::default()
-            };
-            let status_mark = match t.status {
-                Status::Close => "[x]",
-                Status::InProgress => "[-]",
-                _ => "[ ]",
-            };
-            let assignee_mark = if t.assignee.is_some() { " *" } else { "" };
-            ratatui::widgets::ListItem::new(format!("{}{} #{} {}", status_mark, assignee_mark, t.local_id.unwrap_or(0), t.title)).style(style)
-        }).collect();
-
-        let list = ratatui::widgets::List::new(list_items)
-            .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Tasks "));
-        f.render_widget(list, list_area);
+        widgets::render_task_list(f, list_area, &self.tasks, self.selected_index);
 
         // [3] Task Detail (Markdown)
         let (detail_text, detail_title) = if let Some(task) = self.tasks.get(self.selected_index) {
@@ -341,38 +322,17 @@ impl TuiApp {
         widgets::render_markdown(f, detail_area, &detail_text, &detail_title);
 
         // [4] Related Files
-        let files_text = if let Some(task) = self.tasks.get(self.selected_index) {
-            task.linked_files.iter().map(|f| format!("- {}", f)).collect::<Vec<_>>().join("\n")
-        } else {
-            "".to_string()
-        };
-        f.render_widget(ratatui::widgets::Paragraph::new(files_text)
-            .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Files ")), file_area);
+        let files = self.tasks.get(self.selected_index)
+            .map(|t| t.linked_files.clone())
+            .unwrap_or_default();
+        widgets::render_related_files(f, file_area, &files);
 
         // [5] Key Help / Search
-        if self.input_mode == InputMode::Search {
-            f.render_widget(ratatui::widgets::Paragraph::new(format!(" SEARCH: {}█", self.input_buffer))
-                .style(Style::default().fg(Color::Yellow))
-                .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Search (Esc to close) ")), help_area);
-        } else {
-            let help_text = if self.input_buffer.is_empty() {
-                " q:Quit | s:Sync | h/l:Tabs | j/k:Move | a:Add | m:Edit | d:Done | f:Find "
-            } else {
-                " (FILTER ACTIVE) f:Clear Filter | q:Quit | s:Sync | h/l:Tabs | j/k:Move | a:Add | m:Edit | d:Done "
-            };
-            f.render_widget(ratatui::widgets::Paragraph::new(help_text)
-                .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Help ")), help_area);
-        }
+        widgets::render_help_bar(f, help_area, &self.input_mode, &self.input_buffer);
 
         // Popup for Add Mode
         if self.input_mode == InputMode::Add {
-            let area = layout::centered_rect(60, 20, f.area());
-            f.render_widget(ratatui::widgets::Clear, area); // 背景をクリア
-            f.render_widget(
-                ratatui::widgets::Paragraph::new(self.input_buffer.clone())
-                    .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Create New Task (Enter to save, Esc to cancel) ")),
-                area,
-            );
+            widgets::render_add_popup(f, &self.input_buffer);
         }
     }
 }
