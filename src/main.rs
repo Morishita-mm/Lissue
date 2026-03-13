@@ -58,14 +58,14 @@ fn main() -> Result<()> {
             if final_format == "json" {
                 println!("{}", serde_json::to_string_pretty(&tasks)?);
             } else {
-                lissue::presentation::cli::print_tasks_human(&tasks, tree);
+                lissue::presentation::format::print_tasks_human(&tasks, tree);
             }
         }
         Commands::Next => {
             let usecase = TodoUsecase::new(root_dir)?;
             if let Some(task) = usecase.get_next_task()? {
                 let tasks = vec![task];
-                lissue::presentation::cli::print_tasks_human(&tasks, false);
+                lissue::presentation::format::print_tasks_human(&tasks, false);
             } else {
                 println!("No tasks available.");
             }

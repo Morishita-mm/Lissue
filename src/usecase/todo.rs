@@ -16,36 +16,73 @@ pub struct TaskFilter {
     pub unassigned: bool,
 }
 
+pub struct ProjectPaths {
+    pub root: PathBuf,
+}
+
+impl ProjectPaths {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub fn dot_lissue(&self) -> PathBuf {
+        self.root.join(".lissue")
+    }
+
+    pub fn db(&self) -> PathBuf {
+        self.dot_lissue().join("data.db")
+    }
+
+    pub fn tasks_dir(&self) -> PathBuf {
+        self.dot_lissue().join("tasks")
+    }
+
+    pub fn config(&self) -> PathBuf {
+        self.dot_lissue().join("config.yaml")
+    }
+
+    pub fn validate_within_root(&self, path: &str) -> Result<PathBuf> {
+        let full_path = self.root.join(path);
+        let normalized = full_path.lexiclean();
+
+        if normalized.starts_with(&self.root) {
+            Ok(full_path)
+        } else {
+            Err(anyhow!(
+                "Path traversal detected: {} is outside of project root",
+                path
+            ))
+        }
+    }
+}
+
 pub struct TodoUsecase {
     repo: SqliteRepository,
     json_repo: JsonRepository,
     config_repo: YamlConfigRepository,
-    root_dir: PathBuf,
+    paths: ProjectPaths,
 }
 
 impl TodoUsecase {
     pub fn new(start_dir: PathBuf) -> Result<Self> {
-        let root_dir = Self::find_root(start_dir.clone())
+        let root_dir = Self::find_root(start_dir)
             .ok_or_else(|| anyhow!("Not initialized. Run 'lissue init' first in a project root."))?;
 
         let canonical_root = root_dir
             .canonicalize()
             .with_context(|| format!("Failed to canonicalize project root: {:?}", root_dir))?;
 
-        let dot_lissue = canonical_root.join(".lissue");
-        let db_path = dot_lissue.join("data.db");
-        let tasks_dir = dot_lissue.join("tasks");
-        let config_path = dot_lissue.join("config.yaml");
+        let paths = ProjectPaths::new(canonical_root);
 
-        let repo = SqliteRepository::new(db_path)?;
-        let json_repo = JsonRepository::new(tasks_dir);
-        let config_repo = YamlConfigRepository::new(config_path);
+        let repo = SqliteRepository::new(paths.db())?;
+        let json_repo = JsonRepository::new(paths.tasks_dir());
+        let config_repo = YamlConfigRepository::new(paths.config());
 
         Ok(Self {
             repo,
             json_repo,
             config_repo,
-            root_dir: canonical_root,
+            paths,
         })
     }
 
@@ -63,12 +100,14 @@ impl TodoUsecase {
     }
 
     pub fn init(root_dir: PathBuf) -> Result<()> {
-        let dot_mytodo = root_dir.join(".lissue");
-        if !dot_mytodo.exists() {
-            fs::create_dir(&dot_mytodo)?;
+        let paths = ProjectPaths::new(root_dir.clone());
+        let dot_lissue = paths.dot_lissue();
+
+        if !dot_lissue.exists() {
+            fs::create_dir(&dot_lissue)?;
         }
 
-        let tasks_dir = dot_mytodo.join("tasks");
+        let tasks_dir = paths.tasks_dir();
         if !tasks_dir.exists() {
             fs::create_dir(&tasks_dir)?;
         }
@@ -93,12 +132,12 @@ impl TodoUsecase {
             fs::write(gitignore_path, content)?;
         }
 
-        let config_repo = YamlConfigRepository::new(dot_mytodo.join("config.yaml"));
-        if !dot_mytodo.join("config.yaml").exists() {
+        let config_repo = YamlConfigRepository::new(paths.config());
+        if !paths.config().exists() {
             config_repo.save(&Config::default())?;
         }
 
-        let _ = SqliteRepository::new(dot_mytodo.join("data.db"))?;
+        let _ = SqliteRepository::new(paths.db())?;
 
         Ok(())
     }
@@ -130,29 +169,13 @@ impl TodoUsecase {
         Ok(saved_task)
     }
 
-    fn validate_path(&self, path: &str) -> Result<PathBuf> {
-        let full_path = self.root_dir.join(path);
-        let normalized = full_path.lexiclean();
-
-        if normalized.starts_with(&self.root_dir) {
-            Ok(full_path)
-        } else {
-            Err(anyhow!(
-                "Path traversal detected: {} is outside of project root",
-                path
-            ))
-        }
-    }
-
     pub fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>> {
         let tasks = self.repo.find_all()?;
         let filtered = tasks
             .into_iter()
             .filter(|t| {
-                if let Some(status) = filter.status {
-                    if t.status != status {
-                        return false;
-                    }
+                if filter.status.is_some_and(|s| t.status != s) {
+                    return false;
                 }
                 if filter.unassigned && t.assignee.is_some() {
                     return false;
@@ -263,15 +286,15 @@ impl TodoUsecase {
 
         for file_path in &task.linked_files {
             context.push_str(&format!("- {}\n", file_path));
-            if config.context.strategy == "raw_content" {
-                if let Ok(full_path) = self.validate_path(file_path) {
-                    if full_path.exists() {
-                        let content = fs::read_to_string(full_path)?;
-                        context.push_str("```\n");
-                        context.push_str(&content);
-                        context.push_str("\n```\n");
-                    }
-                }
+            if let Some(full_path) = Some(file_path)
+                .filter(|_| config.context.strategy == "raw_content")
+                .and_then(|p| self.paths.validate_within_root(p).ok())
+                .filter(|p| p.exists())
+            {
+                let content = fs::read_to_string(full_path)?;
+                context.push_str("```\n");
+                context.push_str(&content);
+                context.push_str("\n```\n");
             }
         }
 
@@ -313,19 +336,17 @@ impl TodoUsecase {
         let tasks = self.repo.find_all()?;
         let mut count = 0;
         for task in tasks {
-            if task.status == Status::Close {
-                if let Some(local_id) = task.local_id {
-                    self.delete_task(local_id)?;
-                    count += 1;
-                }
+            if let (Status::Close, Some(local_id)) = (task.status, task.local_id) {
+                self.delete_task(local_id)?;
+                count += 1;
             }
         }
         Ok(count)
     }
 
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
-        let old_full = self.validate_path(old_path)?;
-        let new_full = self.validate_path(new_path)?;
+        let old_full = self.paths.validate_within_root(old_path)?;
+        let new_full = self.paths.validate_within_root(new_path)?;
 
         let config = self.get_config()?;
         let all_tasks = self.repo.find_all()?;
@@ -356,13 +377,11 @@ impl TodoUsecase {
                 .arg("mv")
                 .arg(old_path)
                 .arg(new_path)
-                .current_dir(&self.root_dir)
+                .current_dir(&self.paths.root)
                 .status();
 
-            if let Ok(s) = status {
-                if s.success() {
-                    return Ok(());
-                }
+            if status.is_ok_and(|s| s.success()) {
+                return Ok(());
             }
         }
 
@@ -430,7 +449,7 @@ mod tests {
         
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title, "Root Task");
-        assert_eq!(usecase_sub.root_dir.canonicalize()?, usecase_root.root_dir.canonicalize()?);
+        assert_eq!(usecase_sub.paths.root.canonicalize()?, usecase_root.paths.root.canonicalize()?);
 
         Ok(())
     }
@@ -606,12 +625,12 @@ mod tests {
         let usecase = TodoUsecase::new(root)?;
 
         // Project root
-        assert!(usecase.validate_path("valid.txt").is_ok());
-        assert!(usecase.validate_path("subdir/valid.txt").is_ok());
+        assert!(usecase.paths.validate_within_root("valid.txt").is_ok());
+        assert!(usecase.paths.validate_within_root("subdir/valid.txt").is_ok());
 
         // Path traversal
-        assert!(usecase.validate_path("../outside.txt").is_err());
-        assert!(usecase.validate_path("/etc/passwd").is_err());
+        assert!(usecase.paths.validate_within_root("../outside.txt").is_err());
+        assert!(usecase.paths.validate_within_root("/etc/passwd").is_err());
 
         Ok(())
     }

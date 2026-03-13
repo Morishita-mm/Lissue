@@ -47,7 +47,7 @@ impl JsonRepository {
 
         for entry in walkdir::WalkDir::new(&self.base_path) {
             let entry = entry?;
-            if entry.file_type().is_file() && entry.path().extension().map_or(false, |ext| ext == "json") {
+            if entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "json") {
                 let file = File::open(entry.path())?;
                 let task: Task = serde_json::from_reader(file)
                     .with_context(|| format!("Failed to parse task from {:?}", entry.path()))?;
