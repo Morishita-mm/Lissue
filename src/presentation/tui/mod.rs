@@ -23,6 +23,12 @@ pub enum InputMode {
     Search,
 }
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum ViewMode {
+    Tasks,
+    Files,
+}
+
 pub struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<Stdout>>,
 }
@@ -58,8 +64,10 @@ pub struct TuiApp {
     last_refresh: Instant,
     active_tab: Status,
     input_mode: InputMode,
+    view_mode: ViewMode,
     input_buffer: String,
     project_files: Vec<String>,
+    filtered_project_files: Vec<String>,
     file_selected_index: usize,
     info_message: Option<(String, Instant)>,
 }
@@ -74,8 +82,10 @@ impl TuiApp {
             last_refresh: Instant::now(),
             active_tab: Status::Open,
             input_mode: InputMode::Normal,
+            view_mode: ViewMode::Tasks,
             input_buffer: String::new(),
             project_files: Vec::new(),
+            filtered_project_files: Vec::new(),
             file_selected_index: 0,
             info_message: None,
         };
@@ -93,9 +103,10 @@ impl TuiApp {
             unassigned: false,
         })?;
 
-        // Fuzzy filtering if in Search mode or if query exists
-        if !self.input_buffer.is_empty() && (self.input_mode == InputMode::Search || self.input_mode == InputMode::Normal) {
-            let matcher = fuzzy_matcher::skim::SkimMatcherV2::default().ignore_case();
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default().ignore_case();
+
+        // 1. Filter tasks
+        if !self.input_buffer.is_empty() && self.view_mode == ViewMode::Tasks {
             tasks = tasks
                 .into_iter()
                 .filter(|t| {
@@ -104,13 +115,35 @@ impl TuiApp {
                 })
                 .collect();
         }
-
         self.tasks = tasks;
+
+        // 2. Filter project files
+        let mut filtered_files = self.project_files.clone();
+        if !self.input_buffer.is_empty() && self.view_mode == ViewMode::Files {
+            filtered_files = filtered_files
+                .into_iter()
+                .filter(|f| {
+                    use fuzzy_matcher::FuzzyMatcher;
+                    matcher.fuzzy_match(f, &self.input_buffer).is_some()
+                })
+                .collect();
+        }
+        self.filtered_project_files = filtered_files;
+
+        // Index clamping for tasks
         if self.tasks.is_empty() {
             self.selected_index = 0;
         } else if self.selected_index >= self.tasks.len() {
             self.selected_index = self.tasks.len() - 1;
         }
+
+        // Index clamping for files
+        if self.filtered_project_files.is_empty() {
+            self.file_selected_index = 0;
+        } else if self.file_selected_index >= self.filtered_project_files.len() {
+            self.file_selected_index = self.filtered_project_files.len() - 1;
+        }
+
         self.last_refresh = Instant::now();
         Ok(())
     }
@@ -129,12 +162,8 @@ impl TuiApp {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
                         match self.handle_key_event(key.code) {
-                            Ok(true) => {
-                                terminal.clear()?;
-                            }
-                            Err(e) => {
-                                self.set_info(&format!("Error: {}", e));
-                            }
+                            Ok(true) => { terminal.clear()?; }
+                            Err(e) => { self.set_info(&format!("Error: {}", e)); }
                             _ => {}
                         }
                     }
@@ -161,7 +190,7 @@ impl TuiApp {
     fn handle_normal_key(&mut self, code: KeyCode) -> Result<bool> {
         match code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
-            KeyCode::Char('f') | KeyCode::Char('/') => {
+            KeyCode::Char('/') | KeyCode::Char('?') => {
                 self.input_mode = InputMode::Search;
                 self.input_buffer = String::new();
                 self.refresh_tasks()?;
@@ -173,8 +202,10 @@ impl TuiApp {
             KeyCode::Char('A') => {
                 if !self.tasks.is_empty() {
                     self.project_files = self.usecase.list_project_files()?;
-                    self.file_selected_index = 0;
+                    self.view_mode = ViewMode::Files;
                     self.input_mode = InputMode::FileSelect;
+                    self.input_buffer = String::new();
+                    self.refresh_tasks()?;
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -283,10 +314,18 @@ impl TuiApp {
     fn handle_file_select_key(&mut self, code: KeyCode) -> Result<bool> {
         match code {
             KeyCode::Esc | KeyCode::Char('A') | KeyCode::Char('q') => {
+                self.view_mode = ViewMode::Tasks;
                 self.input_mode = InputMode::Normal;
+                self.input_buffer = String::new();
+                self.refresh_tasks()?;
+            }
+            KeyCode::Char('/') | KeyCode::Char('?') => {
+                self.input_mode = InputMode::Search;
+                self.input_buffer = String::new();
+                self.refresh_tasks()?;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if !self.project_files.is_empty() && self.file_selected_index < self.project_files.len() - 1 {
+                if !self.filtered_project_files.is_empty() && self.file_selected_index < self.filtered_project_files.len() - 1 {
                     self.file_selected_index += 1;
                 }
             }
@@ -296,7 +335,7 @@ impl TuiApp {
                 }
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
-                if let (Some(task), Some(file_path)) = (self.tasks.get(self.selected_index), self.project_files.get(self.file_selected_index)) {
+                if let (Some(task), Some(file_path)) = (self.tasks.get(self.selected_index), self.filtered_project_files.get(self.file_selected_index)) {
                     if let Some(id) = task.local_id {
                         if task.linked_files.contains(file_path) {
                             self.usecase.detach_file(id, file_path)?;
@@ -315,7 +354,11 @@ impl TuiApp {
     fn handle_search_key(&mut self, code: KeyCode) -> Result<bool> {
         match code {
             KeyCode::Enter | KeyCode::Esc => {
-                self.input_mode = InputMode::Normal;
+                self.input_mode = if self.view_mode == ViewMode::Files {
+                    InputMode::FileSelect
+                } else {
+                    InputMode::Normal
+                };
                 self.refresh_tasks()?;
             }
             KeyCode::Backspace => {
@@ -408,11 +451,11 @@ impl TuiApp {
         widgets::render_tabs(f, tab_area, self.active_tab);
 
         // [2] Task List or File Selection
-        if self.input_mode == InputMode::FileSelect {
+        if self.view_mode == ViewMode::Files {
             let linked_files = self.tasks.get(self.selected_index)
                 .map(|t| t.linked_files.as_slice())
                 .unwrap_or(&[]);
-            widgets::render_file_selection(f, list_area, &self.project_files, self.file_selected_index, linked_files);
+            widgets::render_file_selection(f, list_area, &self.filtered_project_files, self.file_selected_index, linked_files);
         } else {
             widgets::render_task_list(f, list_area, &self.tasks, self.selected_index);
         }
@@ -567,7 +610,7 @@ mod tests {
         app.selected_index = 1; // Select Banana
         
         // Start search for "Apple"
-        app.handle_key_event(KeyCode::Char('f')).unwrap();
+        app.handle_key_event(KeyCode::Char('/')).unwrap(); // Vim-like search
         app.input_buffer = "Apple".to_string();
         app.refresh_tasks().unwrap();
         
@@ -590,7 +633,7 @@ mod tests {
         let (mut app, _dir) = setup_app();
         
         // Enter search mode
-        app.handle_key_event(KeyCode::Char('f')).unwrap();
+        app.handle_key_event(KeyCode::Char('/')).unwrap();
         assert_eq!(app.input_buffer, "".to_string());
         
         // Backspace on empty query should not panic
@@ -611,7 +654,7 @@ mod tests {
         let file_path = "readme.md";
         std::fs::write(root.join(file_path), "content").unwrap();
         
-        // Manually enter Attach mode (since 'A' now goes to FileSelect)
+        // Manually enter Attach mode
         app.input_mode = InputMode::Attach;
         app.input_buffer = String::new();
         
@@ -645,7 +688,7 @@ mod tests {
         assert!(app.project_files.contains(&file_path.to_string()));
         
         // Find index of readme.md
-        let readme_idx = app.project_files.iter().position(|f| f == file_path).unwrap();
+        let readme_idx = app.filtered_project_files.iter().position(|f| f == file_path).unwrap();
         app.file_selected_index = readme_idx;
         
         // Toggle attachment with Space
@@ -657,6 +700,26 @@ mod tests {
         // Toggle again to detach
         app.handle_key_event(KeyCode::Char(' ')).unwrap();
         assert_eq!(app.tasks[0].linked_files.len(), 0);
+    }
+
+    #[test]
+    fn test_file_search_logic() {
+        let (mut app, dir) = setup_app();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("cargo.toml"), "content").unwrap();
+        std::fs::write(root.join("src/main.rs"), "content").unwrap();
+        
+        app.handle_key_event(KeyCode::Char('A')).unwrap(); // Enter FileSelect
+        assert!(app.filtered_project_files.len() >= 2);
+        
+        // Start search for "main"
+        app.handle_key_event(KeyCode::Char('/')).unwrap();
+        app.input_buffer = "main".to_string();
+        app.refresh_tasks().unwrap();
+        
+        assert_eq!(app.filtered_project_files.len(), 1);
+        assert!(app.filtered_project_files[0].contains("main.rs"));
     }
 
     #[test]

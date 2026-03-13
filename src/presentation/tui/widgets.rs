@@ -108,9 +108,9 @@ pub fn render_help_bar(f: &mut Frame, area: Rect, input_mode: &InputMode, input_
             .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Search (Esc to close) ")), area);
     } else {
         let help_text = if input_buffer.is_empty() {
-            " q:Quit | s:Sync | h/l:Tabs | j/k:Move | a:Add | A:Attach | m:Edit | d:Done | f:Find "
+            " q:Quit | s:Sync | h/l:Tabs | j/k:Move | a:Add | A:Attach | m:Edit | d:Done | /:Find "
         } else {
-            " (FILTER ACTIVE) f:Clear Filter | q:Quit | s:Sync | h/l:Tabs | j/k:Move | a:Add | A:Attach | m:Edit | d:Done "
+            " (FILTER ACTIVE) /:Clear Filter | q:Quit | s:Sync | h/l:Tabs | j/k:Move | a:Add | A:Attach | m:Edit | d:Done "
         };
         f.render_widget(ratatui::widgets::Paragraph::new(help_text)
             .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Help ")), area);
