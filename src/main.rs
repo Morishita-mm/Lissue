@@ -10,8 +10,19 @@ use std::io::Read;
 use std::process::Command;
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let args: Vec<String> = env::args().collect();
     let root_dir = env::current_dir()?;
+
+    if args.len() == 1 {
+        // TUI Mode
+        let usecase = TodoUsecase::new(root_dir)?;
+        let mut guard = lissue::presentation::tui::TerminalGuard::new()?;
+        let mut app = lissue::presentation::tui::TuiApp::new(usecase)?;
+        app.run(guard.terminal())?;
+        return Ok(());
+    }
+
+    let cli = Cli::parse();
 
     match cli.command {
         Commands::Init => {

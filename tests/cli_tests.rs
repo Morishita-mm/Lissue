@@ -312,3 +312,16 @@ fn test_subdir_access() {
         .stdout(predicate::str::contains("Root Task"))
         .stdout(predicate::str::contains("Sub Task"));
 }
+
+#[test]
+fn test_tui_uninitialized() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    // Run 'lissue' without arguments in an uninitialized directory
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not initialized"));
+}
