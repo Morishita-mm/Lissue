@@ -2,3 +2,4 @@
 .lissue/data.db
 *.tape
 .lissue
+.DS_Store

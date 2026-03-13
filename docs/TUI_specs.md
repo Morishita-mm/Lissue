@@ -1,79 +1,48 @@
-# lissue TUI 仕様書 (v1.0)
+# lissue TUI 仕様書 (v1.1)
 
 ## 1. コンセプト
 
 * **Lazygit-inspired**: 思考のスピードを止めない、直感的なペイン移動とキー操作。
-* **Terminal-Agnostic**: 特殊な絵文字に頼らず、標準的なNerd FontsやASCII文字でリッチな表現を実現。
-* **Bridge for AI & Human**: AIの稼働状況を一目で把握し、人間が即座に介入できるUI。
+* **Vim-like Experience**: `/` キーによる検索、`j/k` による移動など、開発者に馴染みのある操作体系。
+* **Zero-Conf Navigation**: プロジェクトルートを自動探索し、どこからでも即座に起動。
 
-## 2. 画面レイアウト
+## 2. 画面構成 (レイアウト)
 
-画面を4つのメイン領域に分割します。
+ターミナル全体を 5 つの主要領域に分割。
 
-```text
-+-------------------------------------------------------------+
-| [1] Status / Tabs (Todo / Doing / Done / All)               |
-+-----------------------+-------------------------------------+
-| [2] Task List         | [3] Task Detail (Markdown)          |
-|                       |                                     |
-| > #123 Implement TUI  | ## Description                      |
-|   #124 Fix SQLite bug | This task focuses on...             |
-| * #125 [AI] Sync logic|                                     |
-|                       | ----------------------------------- |
-|                       | [4] Related Files                   |
-|                       | - src/main.rs                       |
-|                       | - src/tui/mod.rs                    |
-+-----------------------+-------------------------------------+
-| [5] Key Help / Status Line (s: sync, f: filter, q: quit)    |
-+-------------------------------------------------------------+
+1.  **Status/Tabs (Top)**: 現在のフィルタ状態（Open, InProgress, Pending, Close）を表示。`h/l` で切り替え。
+2.  **Left Pane (Main)**: 
+    *   **Task List**: タスクの一覧を表示。
+    *   **File Selector (Shift-A)**: プロジェクト内のファイルを一覧表示し、`Space` で関連付けをトグル。
+3.  **Right Top Pane**: 選択中のタスクの Description を Markdown レンダリング。タイトルは枠線部分に表示。
+4.  **Right Bottom Pane**: 関連付けられたファイルパスの一覧。
+5.  **Help/Notification Bar (Bottom)**: 利用可能なキーガイド、または一時的なエラー/通知メッセージを表示。
 
-```
+## 3. 入力モード (InputMode)
 
-## 3. 各コンポーネント詳細
+*   **Normal**: 基本の閲覧・ナビゲーションモード。
+*   **Add**: タスク新規追加。中央ポップアップでタイトルを入力。
+*   **Search**: `/` または `?` で開始。リアルタイムでタスクまたはファイルを絞り込み。
+*   **FileSelect (Shift-A)**: インタラクティブなファイル関連付けモード。
 
-### [2] Task List（タスク一覧）
+## 4. キーバインド
 
-* **環境依存を避けたステータス表示**:
-* Nerd Fonts等のデファクトスタンダード（`[ ]`, `[x]`, `[-]`）または、シンプルに色分けされたASCII記号を使用。
-* 割り当て済みタスクには `*` や `[@]` のようなプレフィックスを付け、誰（人間かAIか）が持っているかを明示。
+| キー | アクション | モード |
+| :--- | :--- | :--- |
+| `q`, `Esc` | 終了 / モード解除 | 共通 |
+| `j`, `k` | 上下移動 | Normal / FileSelect |
+| `h`, `l` | タブ（ステータス）切り替え | Normal |
+| `/`, `?` | 検索開始 | Normal / FileSelect |
+| `a` | 新規タスク追加（タイトル入力） | Normal |
+| `A` (Shift-A) | ファイル関連付けモード（トグル） | Normal / FileSelect |
+| `m` | 詳細編集（エディタ起動） | Normal |
+| `d` | タスクを完了にする | Normal |
+| `c` | タスクを担当する（Claim） | Normal |
+| `s` | 同期（Sync） | Normal |
+| `Space`, `Enter` | ファイル関連付けのトグル | FileSelect |
 
-* **インタラクティブ・フィルタリング**:
-* `f` キーでファジー検索（`command-palette` 風）を起動。
-* タスク名、ID、タグで動的にリストを絞り込み。
+## 5. 特徴的な機能
 
-### [3] Task Detail（詳細表示）
-
-* **Markdown Rendering**:
-* `termimad` や `lowdown` 等のクレートを使用し、ターミナル上で読みやすいMarkdown描画を実現。
-
-* **Context Display**:
-* タスクに紐づく「関連ファイル」をセクションとして分離。
-
-## 4. 操作系（Vim-like Keybindings）
-
-Neovimプラグイン化を想定し、Vimユーザーが「指」で覚えられる配置にします。
-
-| Key | Action | Description |
-| --- | --- | --- |
-| `j` / `k` | 上下移動 | タスクリストの選択移動 |
-| `h` / `l` | ペイン切り替え | リスト ↔ 詳細表示（またはタブ切り替え） |
-| `Enter` | Edit / Focus | タスクの詳細をフル画面で開く、または編集 |
-| `a` | Add | 新規タスク作成（ポップアップ入力） |
-| `d` | Done / Close | タスクを完了状態にする |
-| `c` | Claim / Unclaim | 自分がタスクを担当する（AIの場合はコマンドから実行） |
-| `s` | Sync | `git pull` + `lissue sync` の実行 |
-| `/` or `f` | Find | ファジー検索モード起動 |
-| `q` / `Esc` | Quit / Back | 前の画面に戻る、または終了 |
-
-## 5. 技術選定
-
-* **Core Framework**: `ratatui`
-* **Event Handling**: `crossterm` (クロスプラットフォーム対応)
-* **Fuzzy Search**: `fuzzy-matcher`
-* **Markdown**: `termimad` (Rust製の柔軟なMarkdownレンダラー)
-* **State Management**: 既存の `lissue` Domain/Usecase層をそのまま利用し、TUIはPresentation層として実装。
-
-## 6. Neovimプラグインへの布石
-
-* **headless mode**: TUI自体が独立して動くだけでなく、JSON形式で状態を標準出力できるモードを維持。
-* **Remote Control**: Neovim側からRPC（またはシンプルなCLI呼び出し）経由で `lissue` を操作し、Neovimのフローティングウィンドウに描画する設計を意識。
+*   **ハイブリッド更新**: 3秒おきの定期リフレッシュにより、AIエージェントによる背後の更新を検知。
+*   **堅牢な描画**: `terminal.clear()` と `Clear` ウィジェットにより、残像や描画崩れを徹底排除。
+*   **インライン通知**: エラー発生時もアプリを落とさず、通知バーでユーザーにフィードバック。

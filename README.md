@@ -3,7 +3,8 @@
 [![Crates.io](https://img.shields.io/crates/v/lissue.svg)](https://crates.io/crates/lissue)
 **lissue** (short for **Local Issue**) is a powerful, Git-friendly local TODO CLI designed for developers and AI coding agents. It manages your project tasks using a hybrid storage of SQLite (for speed) and JSON (for Git-based sharing).
 
-![Demo](docs/demo.gif)
+![Demo](docs/cli_demo.gif)
+![TUI_Demo](docs/tui_demo.gif)
 
 ## Why lissue?
 
@@ -11,25 +12,27 @@ The name **lissue** comes from "Local Issue". It aims to bring the powerful issu
 
 ## Key Features
 
+- **Interactive TUI**: A beautiful, Lazygit-inspired terminal interface for humans.
 - **Hybrid Storage**: Fast local operations with SQLite + Git-syncable JSON storage.
 - **Git-Optimized**: "1 Task per File" architecture prevents merge conflicts.
 - **AI-Ready**: Specialized commands for AI agents, including context dumping and auto-locking.
 - **Hierarchical Tasks**: Support for parent-child relationships and tree view display.
-- **Secure**: Built-in protection against path traversal and SQL injection.
-- **Flexible**: Editor integration, file movement tracking, and extensive filtering.
+- **Vim-like Experience**: Familiar keybindings (`/`, `j/k`, `h/l`) for speed.
 
 ## Installation
 
 ### From crates.io (Recommended)
+
 ```bash
 cargo install lissue
 ```
 
 ### From Source
+
 ```bash
 # Clone the repository
-git clone https://github.com/Morishita-mm/rust-todo-cli
-cd rust-todo-cli
+git clone https://github.com/Morishita-mm/Lissue
+cd Lissue
 
 # Install locally
 cargo install --path .
@@ -38,28 +41,41 @@ cargo install --path .
 ## Quick Start
 
 1. **Initialize** the repository in your project root:
+
    ```bash
    lissue init
    ```
-2. **Add** a task:
+
+2. **Launch TUI** (Interactive Mode):
+
+   ```bash
+   lissue
+   ```
+
+3. **Add** a task via CLI:
+
    ```bash
    lissue add "Main task" -m "Main description"
    # Add a subtask to ID 1 with related files
-   lissue add "Sub task" -p 1 -f src/main.rs -f src/lib.rs
-   # Or just 'lissue add' to open your $EDITOR
+   lissue add "Sub task" -p 1 -f src/main.rs
    ```
-3. **List** tasks:
-   ```bash
-   lissue list --tree
-   ```
-4. **Claim** a task (for AI agents or team members):
-   ```bash
-   lissue claim 1 --by "Agent-Alpha"
-   ```
-5. **Sync** with Git (Apply merged JSON files to your local database):
-   ```bash
-   lissue sync
-   ```
+
+## TUI Guide
+
+Run `lissue` without arguments to enter the interactive mode.
+
+| Key | Action |
+| :--- | :--- |
+| `j` / `k` | Navigate tasks or files |
+| `h` / `l` | Switch between Status tabs (Open, Doing, Pending, Done) |
+| `/` | Search tasks or files (Fuzzy matching) |
+| `a` | Quick add a new task title |
+| `A` | **Attach mode**: Toggle project files to the selected task |
+| `m` | Edit full task description in your `$EDITOR` |
+| `d` | Mark task as Done |
+| `c` | Claim task (Assign to yourself and mark as Doing) |
+| `s` | Sync with JSON files |
+| `q` / `Esc` | Quit or exit current mode |
 
 ## Command Reference
 
@@ -68,6 +84,7 @@ cargo install --path .
 | `lissue init` | | Initialize `.lissue` directory and database. |
 | `lissue add [TITLE]` | `-m`, `-p`, `-f` | Add a new task. `-p`: parent ID, `-f`: linked file. |
 | `lissue list` | `-f`, `-t`, `-s`, `-u` | List tasks. `-t`: tree, `-s`: status, `-u`: unassigned. |
+| `lissue attach <ID> <FILES>...` | | Link existing files to a task. |
 | `lissue next` | | Get the next available task (Open & Unassigned). |
 | `lissue claim <ID>` | `--by` | Mark task as In Progress and assign to yourself/agent. |
 | `lissue close <ID>` | | Close a task. |
@@ -78,15 +95,10 @@ cargo install --path .
 | `lissue rm <ID>` | | Permanently remove a task. |
 | `lissue clear` | | Permanently remove all closed tasks. |
 
-## Help and Discoverability
-
-You can explore all available commands and options using:
-- `lissue help`: List all available subcommands.
-- `lissue <COMMAND> --help`: Show detailed help for a specific subcommand (e.g., `lissue add --help`).
-
 ## Configuration
 
 Settings are stored in `.lissue/config.yaml`:
+
 - `output.default_format`: `human` or `json`
 - `output.auto_sync`: Enable/disable implicit sync during `list` or `next`.
 - `integration.git_mv_hook`: Use `git mv` during `lissue mv`.

@@ -1,6 +1,6 @@
 [package]
 name = "lissue"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Morishita-mm <183205013+Morishita-mm@users.noreply.github.com>"]
 edition = "2024"
 description = "A local TODO CLI for project management with SQLite and Git-friendly JSON storage"
