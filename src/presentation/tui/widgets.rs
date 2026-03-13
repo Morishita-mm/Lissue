@@ -2,6 +2,7 @@ use ratatui::prelude::*;
 use termimad::{MadSkin};
 use crate::domain::task::{Status, Task};
 use super::InputMode;
+use std::time::Instant;
 
 pub fn render_tabs(f: &mut Frame, area: Rect, active_tab: Status) {
     let titles = vec![" [1] Open ", " [2] Doing ", " [3] Pending ", " [4] Done "];
@@ -40,6 +41,23 @@ pub fn render_task_list(f: &mut Frame, area: Rect, tasks: &[Task], selected_inde
     f.render_widget(list, area);
 }
 
+pub fn render_file_selection(f: &mut Frame, area: Rect, files: &[String], selected_index: usize, linked_files: &[String]) {
+    let list_items: Vec<ratatui::widgets::ListItem> = files.iter().enumerate().map(|(i, path)| {
+        let is_linked = linked_files.contains(path);
+        let style = if i == selected_index {
+            Style::default().bg(Color::DarkGray).fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        let mark = if is_linked { "[x]" } else { "[ ]" };
+        ratatui::widgets::ListItem::new(format!("{} {}", mark, path)).style(style)
+    }).collect();
+
+    let list = ratatui::widgets::List::new(list_items)
+        .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Select Files (Space to Toggle, A/Esc to Exit) "));
+    f.render_widget(list, area);
+}
+
 pub fn render_markdown(f: &mut Frame, area: Rect, text: &str, title: &str) {
     let block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
@@ -71,7 +89,19 @@ pub fn render_related_files(f: &mut Frame, area: Rect, files: &[String]) {
         .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Files ")), area);
 }
 
-pub fn render_help_bar(f: &mut Frame, area: Rect, input_mode: &InputMode, input_buffer: &str) {
+pub fn render_help_bar(f: &mut Frame, area: Rect, input_mode: &InputMode, input_buffer: &str, info_message: &Option<(String, Instant)>) {
+    if let Some((msg, _)) = info_message {
+        let style = if msg.starts_with("Error") {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        f.render_widget(ratatui::widgets::Paragraph::new(msg.as_str())
+            .style(style)
+            .block(ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title(" Notification ")), area);
+        return;
+    }
+
     if *input_mode == InputMode::Search {
         f.render_widget(ratatui::widgets::Paragraph::new(format!(" SEARCH: {}█", input_buffer))
             .style(Style::default().fg(Color::Yellow))

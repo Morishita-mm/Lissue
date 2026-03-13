@@ -365,6 +365,41 @@ impl TodoUsecase {
         self.json_repo.save_task(&task)
     }
 
+    pub fn detach_file(&self, local_id: i32, file_path: &str) -> Result<()> {
+        let mut task = self
+            .repo
+            .find_by_local_id(local_id)?
+            .ok_or_else(|| anyhow!("Task not found: {}", local_id))?;
+
+        task.linked_files.retain(|f| f != file_path);
+        task.updated_at = Utc::now();
+        self.repo.save(&task)?;
+        self.json_repo.save_task(&task)
+    }
+
+    pub fn list_project_files(&self) -> Result<Vec<String>> {
+        let mut files = Vec::new();
+        for entry in walkdir::WalkDir::new(&self.paths.root)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy();
+                name != ".git" && name != ".lissue" && name != "target"
+            })
+        {
+            let entry = entry?;
+            if entry.file_type().is_file() {
+                if let Ok(path) = entry.path().strip_prefix(&self.paths.root) {
+                    let path_str = path.to_string_lossy().to_string();
+                    if !path_str.is_empty() {
+                        files.push(path_str);
+                    }
+                }
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
         let old_full = self.paths.validate_within_root(old_path)?;
         let new_full = self.paths.validate_within_root(new_path)?;
@@ -630,6 +665,53 @@ mod tests {
 
         // Path traversal
         assert!(usecase.attach_files(1, vec!["../outside.txt".to_string()]).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_project_files() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root.clone())?;
+
+        fs::write(root.join("file1.txt"), "content")?;
+        fs::create_dir(root.join("subdir"))?;
+        fs::write(root.join("subdir/file2.txt"), "content")?;
+        fs::create_dir(root.join(".git"))?;
+        fs::write(root.join(".git/config"), "content")?;
+
+        let files = usecase.list_project_files()?;
+        // file1.txt, subdir/file2.txt, AND .gitignore (created by init)
+        assert_eq!(files.len(), 3);
+        assert!(files.contains(&"file1.txt".to_string()));
+        assert!(files.contains(&"subdir/file2.txt".to_string()));
+        assert!(files.contains(&".gitignore".to_string()));
+        assert!(!files.contains(&".git/config".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_detach_file() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root.clone())?;
+
+        let file = "file.txt";
+        fs::write(root.join(file), "content")?;
+
+        usecase.add_task("Detach Test".to_string(), None, None)?;
+        usecase.attach_files(1, vec![file.to_string()])?;
+        
+        let task = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(task.linked_files.len(), 1);
+
+        usecase.detach_file(1, file)?;
+        let task = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(task.linked_files.len(), 0);
 
         Ok(())
     }

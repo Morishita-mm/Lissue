@@ -19,6 +19,7 @@ pub enum InputMode {
     Normal,
     Add,
     Attach,
+    FileSelect,
     Search,
 }
 
@@ -58,6 +59,9 @@ pub struct TuiApp {
     active_tab: Status,
     input_mode: InputMode,
     input_buffer: String,
+    project_files: Vec<String>,
+    file_selected_index: usize,
+    info_message: Option<(String, Instant)>,
 }
 
 impl TuiApp {
@@ -71,9 +75,16 @@ impl TuiApp {
             active_tab: Status::Open,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
+            project_files: Vec::new(),
+            file_selected_index: 0,
+            info_message: None,
         };
         app.refresh_tasks()?;
         Ok(app)
+    }
+
+    pub fn set_info(&mut self, message: &str) {
+        self.info_message = Some((message.to_string(), Instant::now()));
     }
 
     pub fn refresh_tasks(&mut self) -> Result<()> {
@@ -108,18 +119,30 @@ impl TuiApp {
         while !self.should_quit {
             terminal.draw(|f| self.render(f))?;
 
+            if let Some((_, time)) = self.info_message {
+                if time.elapsed() > Duration::from_secs(3) {
+                    self.info_message = None;
+                }
+            }
+
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
-                        if self.handle_key_event(key.code)? {
-                            terminal.clear()?;
+                        match self.handle_key_event(key.code) {
+                            Ok(true) => {
+                                terminal.clear()?;
+                            }
+                            Err(e) => {
+                                self.set_info(&format!("Error: {}", e));
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
 
             if self.last_refresh.elapsed() > Duration::from_secs(3) {
-                self.refresh_tasks()?;
+                let _ = self.refresh_tasks();
             }
         }
         Ok(())
@@ -130,6 +153,7 @@ impl TuiApp {
             InputMode::Normal => self.handle_normal_key(code),
             InputMode::Add => self.handle_add_key(code),
             InputMode::Attach => self.handle_attach_key(code),
+            InputMode::FileSelect => self.handle_file_select_key(code),
             InputMode::Search => self.handle_search_key(code),
         }
     }
@@ -148,8 +172,9 @@ impl TuiApp {
             }
             KeyCode::Char('A') => {
                 if !self.tasks.is_empty() {
-                    self.input_mode = InputMode::Attach;
-                    self.input_buffer = String::new();
+                    self.project_files = self.usecase.list_project_files()?;
+                    self.file_selected_index = 0;
+                    self.input_mode = InputMode::FileSelect;
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -255,6 +280,38 @@ impl TuiApp {
         Ok(false)
     }
 
+    fn handle_file_select_key(&mut self, code: KeyCode) -> Result<bool> {
+        match code {
+            KeyCode::Esc | KeyCode::Char('A') | KeyCode::Char('q') => {
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if !self.project_files.is_empty() && self.file_selected_index < self.project_files.len() - 1 {
+                    self.file_selected_index += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.file_selected_index > 0 {
+                    self.file_selected_index -= 1;
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                if let (Some(task), Some(file_path)) = (self.tasks.get(self.selected_index), self.project_files.get(self.file_selected_index)) {
+                    if let Some(id) = task.local_id {
+                        if task.linked_files.contains(file_path) {
+                            self.usecase.detach_file(id, file_path)?;
+                        } else {
+                            self.usecase.attach_files(id, vec![file_path.clone()])?;
+                        }
+                        self.refresh_tasks()?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     fn handle_search_key(&mut self, code: KeyCode) -> Result<bool> {
         match code {
             KeyCode::Enter | KeyCode::Esc => {
@@ -350,8 +407,15 @@ impl TuiApp {
         // [1] Status / Tabs
         widgets::render_tabs(f, tab_area, self.active_tab);
 
-        // [2] Task List
-        widgets::render_task_list(f, list_area, &self.tasks, self.selected_index);
+        // [2] Task List or File Selection
+        if self.input_mode == InputMode::FileSelect {
+            let linked_files = self.tasks.get(self.selected_index)
+                .map(|t| t.linked_files.as_slice())
+                .unwrap_or(&[]);
+            widgets::render_file_selection(f, list_area, &self.project_files, self.file_selected_index, linked_files);
+        } else {
+            widgets::render_task_list(f, list_area, &self.tasks, self.selected_index);
+        }
 
         // [3] Task Detail (Markdown)
         let (detail_text, detail_title) = if let Some(task) = self.tasks.get(self.selected_index) {
@@ -369,8 +433,8 @@ impl TuiApp {
             .unwrap_or_default();
         widgets::render_related_files(f, file_area, &files);
 
-        // [5] Key Help / Search
-        widgets::render_help_bar(f, help_area, &self.input_mode, &self.input_buffer);
+        // [5] Key Help / Search / Notification
+        widgets::render_help_bar(f, help_area, &self.input_mode, &self.input_buffer, &self.info_message);
 
         // Popups
         match self.input_mode {
@@ -547,9 +611,9 @@ mod tests {
         let file_path = "readme.md";
         std::fs::write(root.join(file_path), "content").unwrap();
         
-        // Enter Attach mode
-        app.handle_key_event(KeyCode::Char('A')).unwrap();
-        assert_eq!(app.input_mode, InputMode::Attach);
+        // Manually enter Attach mode (since 'A' now goes to FileSelect)
+        app.input_mode = InputMode::Attach;
+        app.input_buffer = String::new();
         
         // Type file path
         for c in file_path.chars() {
@@ -566,6 +630,33 @@ mod tests {
         
         // Apple (index 0) should now have the file linked
         assert_eq!(app.tasks[0].linked_files[0], file_path.to_string());
+    }
+
+    #[test]
+    fn test_file_selection_toggle_logic() {
+        let (mut app, dir) = setup_app(); // Apple, Banana
+        let root = dir.path();
+        let file_path = "readme.md";
+        std::fs::write(root.join(file_path), "content").unwrap();
+        
+        // Enter FileSelect mode via 'A' (Shift-A)
+        app.handle_key_event(KeyCode::Char('A')).unwrap();
+        assert_eq!(app.input_mode, InputMode::FileSelect);
+        assert!(app.project_files.contains(&file_path.to_string()));
+        
+        // Find index of readme.md
+        let readme_idx = app.project_files.iter().position(|f| f == file_path).unwrap();
+        app.file_selected_index = readme_idx;
+        
+        // Toggle attachment with Space
+        app.handle_key_event(KeyCode::Char(' ')).unwrap();
+        
+        // Verify Apple (index 0) has file linked
+        assert_eq!(app.tasks[0].linked_files[0], file_path.to_string());
+        
+        // Toggle again to detach
+        app.handle_key_event(KeyCode::Char(' ')).unwrap();
+        assert_eq!(app.tasks[0].linked_files.len(), 0);
     }
 
     #[test]
