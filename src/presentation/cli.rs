@@ -72,6 +72,13 @@ pub enum Commands {
     Mv { old_path: String, new_path: String },
     /// Permanently remove a task from the database and JSON
     Rm { local_id: i32 },
+    /// Attach files to an existing task
+    Attach {
+        /// Local ID of the task
+        local_id: i32,
+        /// File paths to attach
+        files: Vec<String>,
+    },
     /// Permanently remove all closed tasks
     Clear,
 }

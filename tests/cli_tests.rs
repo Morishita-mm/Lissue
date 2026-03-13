@@ -314,6 +314,59 @@ fn test_subdir_access() {
 }
 
 #[test]
+fn test_cli_attach() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("init")
+        .assert()
+        .success();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("add")
+        .arg("Attach Task")
+        .assert()
+        .success();
+
+    let file_path = root.join("attach_me.txt");
+    std::fs::write(&file_path, "content").unwrap();
+
+    // Attach
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
+        .arg("attach")
+        .arg("1")
+        .arg("attach_me.txt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Files attached to task 1"));
+
+    // Verify in context
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
+        .arg("context")
+        .arg("1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- attach_me.txt"));
+
+    // Fail if file doesn't exist
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
+        .arg("attach")
+        .arg("1")
+        .arg("non_existent.txt")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("File does not exist"));
+}
+
+#[test]
 fn test_tui_uninitialized() {
     let dir = tempdir().unwrap();
     let root = dir.path();

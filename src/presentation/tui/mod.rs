@@ -18,6 +18,7 @@ pub mod widgets;
 pub enum InputMode {
     Normal,
     Add,
+    Attach,
     Search,
 }
 
@@ -128,6 +129,7 @@ impl TuiApp {
         match self.input_mode {
             InputMode::Normal => self.handle_normal_key(code),
             InputMode::Add => self.handle_add_key(code),
+            InputMode::Attach => self.handle_attach_key(code),
             InputMode::Search => self.handle_search_key(code),
         }
     }
@@ -143,6 +145,12 @@ impl TuiApp {
             KeyCode::Char('a') => {
                 self.input_mode = InputMode::Add;
                 self.input_buffer = String::new();
+            }
+            KeyCode::Char('A') => {
+                if !self.tasks.is_empty() {
+                    self.input_mode = InputMode::Attach;
+                    self.input_buffer = String::new();
+                }
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.move_selection(1);
@@ -193,6 +201,40 @@ impl TuiApp {
             KeyCode::Enter => {
                 if !self.input_buffer.is_empty() {
                     self.usecase.add_task(self.input_buffer.clone(), None, None)?;
+                }
+                self.input_mode = InputMode::Normal;
+                self.input_buffer = String::new();
+                self.refresh_tasks()?;
+            }
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+                self.input_buffer = String::new();
+            }
+            KeyCode::Backspace => {
+                self.input_buffer.pop();
+            }
+            KeyCode::Char(c) => {
+                self.input_buffer.push(c);
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_attach_key(&mut self, code: KeyCode) -> Result<bool> {
+        match code {
+            KeyCode::Enter => {
+                if !self.input_buffer.is_empty() {
+                    if let Some(task) = self.tasks.get(self.selected_index) {
+                        if let Some(id) = task.local_id {
+                            let paths: Vec<String> = self.input_buffer
+                                .split(|c| c == ',' || c == ' ')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                            self.usecase.attach_files(id, paths)?;
+                        }
+                    }
                 }
                 self.input_mode = InputMode::Normal;
                 self.input_buffer = String::new();
@@ -330,9 +372,11 @@ impl TuiApp {
         // [5] Key Help / Search
         widgets::render_help_bar(f, help_area, &self.input_mode, &self.input_buffer);
 
-        // Popup for Add Mode
-        if self.input_mode == InputMode::Add {
-            widgets::render_add_popup(f, &self.input_buffer);
+        // Popups
+        match self.input_mode {
+            InputMode::Add => widgets::render_add_popup(f, &self.input_buffer),
+            InputMode::Attach => widgets::render_attach_popup(f, &self.input_buffer),
+            _ => {}
         }
     }
 }
@@ -494,6 +538,34 @@ mod tests {
         assert_eq!(app.input_buffer, "x".to_string());
         app.handle_key_event(KeyCode::Backspace).unwrap();
         assert_eq!(app.input_buffer, "".to_string());
+    }
+
+    #[test]
+    fn test_attach_action_logic() {
+        let (mut app, dir) = setup_app(); // Apple, Banana
+        let root = dir.path();
+        let file_path = "readme.md";
+        std::fs::write(root.join(file_path), "content").unwrap();
+        
+        // Enter Attach mode
+        app.handle_key_event(KeyCode::Char('A')).unwrap();
+        assert_eq!(app.input_mode, InputMode::Attach);
+        
+        // Type file path
+        for c in file_path.chars() {
+            app.handle_key_event(KeyCode::Char(c)).unwrap();
+        }
+        assert_eq!(app.input_buffer, file_path.to_string());
+        
+        // Press Enter
+        app.handle_key_event(KeyCode::Enter).unwrap();
+        
+        // Should be back to Normal mode
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.input_buffer, "".to_string());
+        
+        // Apple (index 0) should now have the file linked
+        assert_eq!(app.tasks[0].linked_files[0], file_path.to_string());
     }
 
     #[test]

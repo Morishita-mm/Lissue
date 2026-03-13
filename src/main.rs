@@ -47,14 +47,16 @@ fn main() -> Result<()> {
                 return Err(anyhow::anyhow!("Title is required."));
             }
 
-            let mut task = usecase.add_task(final_title, final_message, parent)?;
+            let task = usecase.add_task(final_title, final_message, parent)?;
             if !files.is_empty() {
-                let mut linked = task.linked_files.clone();
-                linked.extend(files);
-                task.linked_files = linked;
-                usecase.save_task(&task)?;
+                usecase.attach_files(task.local_id.unwrap(), files)?;
             }
             println!("Task created with ID: {}", task.local_id.unwrap_or(0));
+        }
+        Commands::Attach { local_id, files } => {
+            let usecase = TodoUsecase::new(root_dir)?;
+            usecase.attach_files(local_id, files)?;
+            println!("Files attached to task {}", local_id);
         }
         Commands::List {
             format,

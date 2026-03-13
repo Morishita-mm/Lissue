@@ -344,6 +344,27 @@ impl TodoUsecase {
         Ok(count)
     }
 
+    pub fn attach_files(&self, local_id: i32, file_paths: Vec<String>) -> Result<()> {
+        let mut task = self
+            .repo
+            .find_by_local_id(local_id)?
+            .ok_or_else(|| anyhow!("Task not found: {}", local_id))?;
+
+        for path in file_paths {
+            let full_path = self.paths.validate_within_root(&path)?;
+            if !full_path.exists() {
+                return Err(anyhow!("File does not exist: {}", path));
+            }
+            if !task.linked_files.contains(&path) {
+                task.linked_files.push(path);
+            }
+        }
+
+        task.updated_at = Utc::now();
+        self.repo.save(&task)?;
+        self.json_repo.save_task(&task)
+    }
+
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
         let old_full = self.paths.validate_within_root(old_path)?;
         let new_full = self.paths.validate_within_root(new_path)?;
@@ -575,6 +596,40 @@ mod tests {
         assert!(context.contains("Context Test"));
         assert!(context.contains("Desc"));
         assert!(context.contains("test_file.txt"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_attach_files() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root.clone())?;
+
+        let file1 = "file1.txt";
+        let file2 = "file2.txt";
+        fs::write(root.join(file1), "content")?;
+        fs::write(root.join(file2), "content")?;
+
+        usecase.add_task("Attach Test".to_string(), None, None)?;
+        
+        // Success
+        usecase.attach_files(1, vec![file1.to_string(), file2.to_string()])?;
+        let task = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(task.linked_files.len(), 2);
+        assert!(task.linked_files.contains(&file1.to_string()));
+
+        // Duplicate prevention
+        usecase.attach_files(1, vec![file1.to_string()])?;
+        let task = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(task.linked_files.len(), 2);
+
+        // File not exist
+        assert!(usecase.attach_files(1, vec!["not_exist.txt".to_string()]).is_err());
+
+        // Path traversal
+        assert!(usecase.attach_files(1, vec!["../outside.txt".to_string()]).is_err());
 
         Ok(())
     }
