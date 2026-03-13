@@ -254,11 +254,61 @@ fn test_mv_and_rm_and_clear() {
         .stdout(predicate::str::contains("Task 1 removed permanently"));
 
     // Verify list empty
-    Command::cargo_bin("lissue")
-        .unwrap()
-        .current_dir(root)
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
         .arg("list")
         .assert()
         .success()
         .stdout(predicate::str::contains("ID").and(predicate::str::contains("Move Task").not()));
+}
+
+#[test]
+fn test_subdir_access() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let sub = root.join("a/b/c");
+    std::fs::create_dir_all(&sub).unwrap();
+
+    // Init at root
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("init")
+        .assert()
+        .success();
+
+    // Add task from root
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("add")
+        .arg("Root Task")
+        .assert()
+        .success();
+
+    // List from deep subdir
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(&sub)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Root Task"));
+
+    // Add task from subdir
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(&sub)
+        .arg("add")
+        .arg("Sub Task")
+        .assert()
+        .success();
+
+    // Verify both exist in list
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Root Task"))
+        .stdout(predicate::str::contains("Sub Task"));
 }

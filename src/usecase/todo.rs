@@ -24,19 +24,18 @@ pub struct TodoUsecase {
 }
 
 impl TodoUsecase {
-    pub fn new(root_dir: PathBuf) -> Result<Self> {
+    pub fn new(start_dir: PathBuf) -> Result<Self> {
+        let root_dir = Self::find_root(start_dir.clone())
+            .ok_or_else(|| anyhow!("Not initialized. Run 'lissue init' first in a project root."))?;
+
         let canonical_root = root_dir
             .canonicalize()
             .with_context(|| format!("Failed to canonicalize project root: {:?}", root_dir))?;
 
-        let dot_mytodo = canonical_root.join(".lissue");
-        let db_path = dot_mytodo.join("data.db");
-        let tasks_dir = dot_mytodo.join("tasks");
-        let config_path = dot_mytodo.join("config.yaml");
-
-        if !dot_mytodo.exists() {
-            return Err(anyhow!("Not initialized. Run 'todo init' first."));
-        }
+        let dot_lissue = canonical_root.join(".lissue");
+        let db_path = dot_lissue.join("data.db");
+        let tasks_dir = dot_lissue.join("tasks");
+        let config_path = dot_lissue.join("config.yaml");
 
         let repo = SqliteRepository::new(db_path)?;
         let json_repo = JsonRepository::new(tasks_dir);
@@ -48,6 +47,19 @@ impl TodoUsecase {
             config_repo,
             root_dir: canonical_root,
         })
+    }
+
+    pub fn find_root(start_dir: PathBuf) -> Option<PathBuf> {
+        let mut current = start_dir;
+        loop {
+            if current.join(".lissue").is_dir() {
+                return Some(current);
+            }
+            if !current.pop() {
+                break;
+            }
+        }
+        None
     }
 
     pub fn init(root_dir: PathBuf) -> Result<()> {
@@ -383,6 +395,45 @@ mod tests {
     use super::*;
     use chrono::{Duration, Utc};
     use tempfile::tempdir;
+
+    #[test]
+    fn test_find_root() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        let sub = root.join("a/b/c");
+        fs::create_dir_all(&sub)?;
+
+        TodoUsecase::init(root.clone())?;
+
+        let found = TodoUsecase::find_root(sub).expect("Should find root");
+        assert_eq!(found.canonicalize()?, root.canonicalize()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_operation_from_subdir() -> Result<()> {
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        let sub = root.join("subdir");
+        fs::create_dir_all(&sub)?;
+
+        TodoUsecase::init(root.clone())?;
+        
+        // Root で追加
+        let usecase_root = TodoUsecase::new(root)?;
+        usecase_root.add_task("Root Task".to_string(), None, None)?;
+
+        // Subdir で一覧取得
+        let usecase_sub = TodoUsecase::new(sub)?;
+        let tasks = usecase_sub.list_tasks(TaskFilter::default())?;
+        
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Root Task");
+        assert_eq!(usecase_sub.root_dir.canonicalize()?, usecase_root.root_dir.canonicalize()?);
+
+        Ok(())
+    }
 
     #[test]
     fn test_init() -> Result<()> {
