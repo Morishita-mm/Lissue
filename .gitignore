@@ -1,3 +1,4 @@
 /target
 .lissue/data.db
 *.tape
+.lissue

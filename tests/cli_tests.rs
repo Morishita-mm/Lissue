@@ -1,6 +1,5 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
-use std::fs;
 use tempfile::tempdir;
 
 #[test]
@@ -69,8 +68,7 @@ fn test_cli_lifecycle() {
     cmd.current_dir(root).arg("sync").assert().success();
 
     assert!(root.join(".lissue/tasks").is_dir());
-    }
-
+}
 
 #[test]
 fn test_tree_display() {
@@ -114,4 +112,153 @@ fn test_tree_display() {
         .success()
         .stdout(predicate::str::contains("Parent (ID: 1)"))
         .stdout(predicate::str::contains("  [ ] Child (ID: 2)"));
+}
+
+#[test]
+fn test_claim_and_context() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("init")
+        .assert()
+        .success();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("add")
+        .arg("Context Task")
+        .arg("-m")
+        .arg("Deep description")
+        .assert()
+        .success();
+
+    // Claim
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
+        .arg("claim")
+        .arg("1")
+        .arg("--by")
+        .arg("Tester")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Task 1 claimed by Tester"));
+
+    // Context
+    let mut cmd = Command::cargo_bin("lissue").unwrap();
+    cmd.current_dir(root)
+        .arg("context")
+        .arg("1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Title: Context Task"))
+        .stdout(predicate::str::contains("Description: Deep description"))
+        .stdout(predicate::str::contains("Status: In Progress"))
+        .stdout(predicate::str::contains("Assignee: Tester"));
+}
+
+#[test]
+fn test_mv_and_rm_and_clear() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("init")
+        .assert()
+        .success();
+
+    // Create a file to move
+    let file_path = root.join("old.txt");
+    std::fs::write(&file_path, "content").unwrap();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("add")
+        .arg("Move Task")
+        .arg("-f")
+        .arg("old.txt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Task created with ID: 1"));
+
+    // Move file
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("mv")
+        .arg("old.txt")
+        .arg("new.txt")
+        .assert()
+        .success();
+
+    // Verify link updated in context
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("context")
+        .arg("1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- new.txt"));
+
+    // Add another task and close it
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("add")
+        .arg("To Clear")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Task created with ID: 2"));
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("close")
+        .arg("2")
+        .assert()
+        .success();
+
+    // Clear
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("clear")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Cleared 1 closed tasks"));
+
+    // Verify task 2 is gone
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("To Clear").not());
+
+    // Rm
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("rm")
+        .arg("1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Task 1 removed permanently"));
+
+    // Verify list empty
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ID").and(predicate::str::contains("Move Task").not()));
 }

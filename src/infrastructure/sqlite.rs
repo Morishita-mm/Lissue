@@ -71,30 +71,56 @@ impl TaskRepository for SqliteRepository {
         let linked_files_json = serde_json::to_string(&task.linked_files)?;
         let parent_global_id = task.parent_global_id.map(|u| u.to_string());
 
-        self.conn.execute(
-            "INSERT INTO tasks (
-                global_id, title, description, status, assignee, parent_global_id, linked_files, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-            ON CONFLICT(global_id) DO UPDATE SET
-                title = excluded.title,
-                description = excluded.description,
-                status = excluded.status,
-                assignee = excluded.assignee,
-                parent_global_id = excluded.parent_global_id,
-                linked_files = excluded.linked_files,
-                updated_at = excluded.updated_at",
-            params![
-                task.global_id.to_string(),
-                task.title,
-                task.description,
-                task.status.to_string(),
-                task.assignee,
-                parent_global_id,
-                linked_files_json,
-                task.created_at,
-                task.updated_at,
-            ],
-        )?;
+        if let Some(local_id) = task.local_id {
+            // Explicit UPDATE to avoid AUTOINCREMENT increment
+            self.conn.execute(
+                "UPDATE tasks SET
+                    title = ?1,
+                    description = ?2,
+                    status = ?3,
+                    assignee = ?4,
+                    parent_global_id = ?5,
+                    linked_files = ?6,
+                    updated_at = ?7
+                WHERE local_id = ?8",
+                params![
+                    task.title,
+                    task.description,
+                    task.status.to_string(),
+                    task.assignee,
+                    parent_global_id,
+                    linked_files_json,
+                    task.updated_at,
+                    local_id,
+                ],
+            )?;
+        } else {
+            // INSERT with ON CONFLICT for safety, but typically used for new tasks
+            self.conn.execute(
+                "INSERT INTO tasks (
+                    global_id, title, description, status, assignee, parent_global_id, linked_files, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                ON CONFLICT(global_id) DO UPDATE SET
+                    title = excluded.title,
+                    description = excluded.description,
+                    status = excluded.status,
+                    assignee = excluded.assignee,
+                    parent_global_id = excluded.parent_global_id,
+                    linked_files = excluded.linked_files,
+                    updated_at = excluded.updated_at",
+                params![
+                    task.global_id.to_string(),
+                    task.title,
+                    task.description,
+                    task.status.to_string(),
+                    task.assignee,
+                    parent_global_id,
+                    linked_files_json,
+                    task.created_at,
+                    task.updated_at,
+                ],
+            )?;
+        }
         Ok(())
     }
 
