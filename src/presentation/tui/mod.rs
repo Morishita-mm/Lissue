@@ -196,15 +196,8 @@ impl TuiApp {
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
-                match self.handle_key_event(key) {
-                    Ok(true) => {
-                        terminal.clear()?;
-                    }
-                    Err(e) => {
-                        self.set_info(&format!("Error: {}", e));
-                    }
-                    _ => {}
-                }
+                let key_result = self.handle_key_event(key);
+                self.handle_key_result(terminal, key_result)?;
             }
 
             if self.last_refresh.elapsed() > Duration::from_secs(3) {
@@ -243,6 +236,24 @@ impl TuiApp {
             InputMode::FileSelect => self.handle_file_select_key(key.code),
             InputMode::Search => self.handle_search_key(key.code),
         }
+    }
+
+    fn handle_key_result<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        result: Result<bool>,
+    ) -> Result<()> {
+        match result {
+            Ok(true) => terminal.clear()?,
+            Ok(false) => {}
+            Err(error) => {
+                // Re-entering the alternate screen invalidates Ratatui's frame
+                // cache. Clear it on failures too, not only after successful edits.
+                terminal.clear()?;
+                self.set_info(&format!("Error: {}", error));
+            }
+        }
+        Ok(())
     }
 
     fn handle_normal_key(&mut self, code: KeyCode) -> Result<bool> {
@@ -729,6 +740,29 @@ mod tests {
         assert_eq!(app.tasks.len(), 1);
         assert_eq!(app.tasks[0].title, "Apple");
         assert!(app.tasks[0].assignee.is_some());
+    }
+
+    #[test]
+    fn test_failed_key_result_clears_frame_cache() {
+        let (mut app, _dir) = setup_app();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Two draws make Ratatui's previous and current buffers identical.
+        terminal.draw(|f| app.render(f)).unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+        // Simulate the alternate screen being cleared by an external editor.
+        terminal.backend_mut().clear().unwrap();
+
+        app.handle_key_result(
+            &mut terminal,
+            Err(anyhow::anyhow!("editor failed to start")),
+        )
+        .unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+
+        let content = format!("{:?}", terminal.backend().buffer());
+        assert!(content.contains("Apple"));
     }
 
     #[test]
