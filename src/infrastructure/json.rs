@@ -2,6 +2,7 @@ use crate::domain::task::Task;
 use anyhow::{Context, Result, anyhow};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
 
 pub struct JsonRepository {
     base_path: PathBuf,
@@ -86,17 +87,42 @@ impl JsonRepository {
         Ok(())
     }
 
-    pub fn save_task(&self, task: &Task) -> Result<()> {
+    pub fn validate_task_path(&self, task: &Task) -> Result<()> {
         self.validate_path(&self.base_path)?;
+        self.validate_path(&self.get_task_path(&task.global_id))
+    }
+
+    pub fn save_task(&self, task: &Task) -> Result<()> {
+        self.validate_task_path(task)?;
         if let Some(parent) = self.get_task_path(&task.global_id).parent() {
             fs::create_dir_all(parent)?;
         }
 
         let path = self.get_task_path(&task.global_id);
-        self.validate_path(&path)?;
-        let file = File::create(&path)
-            .with_context(|| format!("Failed to create JSON file: {:?}", path))?;
-        serde_json::to_writer_pretty(file, task).with_context(|| "Failed to write task to JSON")?;
+        self.validate_task_path(task)?;
+        let target = if path.exists() {
+            fs::canonicalize(&path)
+                .with_context(|| format!("Failed to resolve JSON file: {:?}", path))?
+        } else {
+            path.clone()
+        };
+        self.validate_path(&target)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| anyhow!("JSON file has no parent directory: {:?}", target))?;
+        let mut temporary = NamedTempFile::new_in(parent)
+            .with_context(|| format!("Failed to create temporary JSON file in {:?}", parent))?;
+        self.validate_path(temporary.path())?;
+        serde_json::to_writer_pretty(temporary.as_file_mut(), task)
+            .with_context(|| "Failed to write task to JSON")?;
+        temporary
+            .as_file()
+            .sync_all()
+            .with_context(|| "Failed to flush task JSON")?;
+        temporary
+            .persist(&target)
+            .map_err(|error| error.error)
+            .with_context(|| format!("Failed to replace JSON file: {:?}", target))?;
         Ok(())
     }
 
@@ -114,7 +140,13 @@ impl JsonRepository {
             return Ok(tasks);
         }
 
-        for entry in walkdir::WalkDir::new(&self.base_path) {
+        let walk_root = fs::canonicalize(&self.base_path).with_context(|| {
+            format!(
+                "Failed to resolve JSON tasks directory: {:?}",
+                self.base_path
+            )
+        })?;
+        for entry in walkdir::WalkDir::new(walk_root) {
             let entry = entry?;
             self.validate_path(entry.path())?;
             if entry.file_type().is_file()
@@ -173,6 +205,27 @@ mod tests {
             .join(format!("{}.json", id_str));
         assert!(expected_path.exists());
 
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_all_follows_in_root_tasks_symlink() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let real_tasks = root.path().join("real-tasks");
+        let linked_tasks = root.path().join("tasks");
+        fs::create_dir(&real_tasks)?;
+        symlink(&real_tasks, &linked_tasks)?;
+
+        let repo = JsonRepository::new_with_root(&linked_tasks, root.path())?;
+        let task = Task::new("Through symlink".to_string(), None, None);
+        repo.save_task(&task)?;
+
+        let loaded = repo.load_all()?;
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].title, "Through symlink");
         Ok(())
     }
 

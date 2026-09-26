@@ -467,17 +467,88 @@ impl TodoUsecase {
             })
         {
             let entry = entry?;
-            if entry.file_type().is_file() {
-                if let Ok(path) = entry.path().strip_prefix(&self.paths.root) {
-                    let path_str = path.to_string_lossy().to_string();
-                    if !path_str.is_empty() {
-                        files.push(path_str);
-                    }
+            if entry.file_type().is_file()
+                && let Ok(path) = entry.path().strip_prefix(&self.paths.root)
+            {
+                let path_str = path.to_string_lossy().to_string();
+                if !path_str.is_empty() {
+                    files.push(path_str);
                 }
             }
         }
         files.sort();
         Ok(files)
+    }
+
+    fn persist_move_metadata(&self, changes: &[(Task, Task)]) -> Result<()> {
+        for (_, updated) in changes {
+            self.repo.save(updated)?;
+        }
+        for (_, updated) in changes {
+            self.json_repo.save_task(updated)?;
+        }
+        Ok(())
+    }
+
+    fn restore_move_metadata(&self, changes: &[(Task, Task)]) -> Result<()> {
+        let mut errors = Vec::new();
+        for (original, _) in changes {
+            if let Err(error) = self.repo.save(original) {
+                errors.push(format!("database restore failed: {error}"));
+            }
+        }
+        for (original, _) in changes {
+            if let Err(error) = self.json_repo.save_task(original) {
+                errors.push(format!("JSON restore failed: {error}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!("{}", errors.join("; ")))
+        }
+    }
+
+    fn rollback_file_move(
+        &self,
+        old_full: &Path,
+        new_full: &Path,
+        old_path: &str,
+        new_path: &str,
+        moved_by_git: bool,
+    ) -> Result<()> {
+        if moved_by_git {
+            let git_rollback = std::process::Command::new("git")
+                .arg("mv")
+                .arg(new_path)
+                .arg(old_path)
+                .current_dir(&self.paths.root)
+                .status()
+                .is_ok_and(|status| status.success());
+            if git_rollback && old_full.is_file() && !new_full.exists() {
+                return Ok(());
+            }
+        }
+
+        if old_full.exists() {
+            return Err(anyhow!(
+                "Cannot roll back file move because source exists: {}",
+                old_path
+            ));
+        }
+        if !new_full.is_file() {
+            return Err(anyhow!(
+                "Cannot roll back file move because destination is missing: {}",
+                new_path
+            ));
+        }
+        fs::rename(new_full, old_full).with_context(|| {
+            format!(
+                "Failed to roll back file move from {} to {}",
+                new_path, old_path
+            )
+        })?;
+        Ok(())
     }
 
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
@@ -498,6 +569,27 @@ impl TodoUsecase {
         }
 
         let config = self.get_config()?;
+        // Read and prepare every metadata change before touching the filesystem.
+        // This makes database/JSON failures happen before a move whenever possible.
+        let all_tasks = self.repo.find_all()?;
+        let mut changes = Vec::new();
+        for task in all_tasks {
+            let mut updated = task.clone();
+            let mut file_updated = false;
+            for file in &mut updated.linked_files {
+                if file == old_path {
+                    *file = new_path.to_string();
+                    file_updated = true;
+                }
+            }
+            if file_updated {
+                updated.updated_at = Utc::now();
+                self.validate_linked_paths(&updated)?;
+                self.json_repo.validate_task_path(&updated)?;
+                changes.push((task, updated));
+            }
+        }
+
         let moved_by_git = if config.integration.git_mv_hook {
             std::process::Command::new("git")
                 .arg("mv")
@@ -526,35 +618,39 @@ impl TodoUsecase {
         }
 
         if old_full.exists() || !new_full.is_file() {
+            let rollback =
+                self.rollback_file_move(&old_full, &new_full, old_path, new_path, moved_by_git);
+            return match rollback {
+                Ok(()) => Err(anyhow!(
+                    "File move did not complete: {} -> {}",
+                    old_path,
+                    new_path
+                )),
+                Err(error) => Err(anyhow!(
+                    "File move did not complete: {} -> {}; rollback failed: {error}",
+                    old_path,
+                    new_path
+                )),
+            };
+        }
+
+        if let Err(error) = self.persist_move_metadata(&changes) {
+            let mut rollback_errors = Vec::new();
+            if let Err(rollback_error) = self.restore_move_metadata(&changes) {
+                rollback_errors.push(rollback_error.to_string());
+            }
+            if let Err(rollback_error) =
+                self.rollback_file_move(&old_full, &new_full, old_path, new_path, moved_by_git)
+            {
+                rollback_errors.push(rollback_error.to_string());
+            }
+            if rollback_errors.is_empty() {
+                return Err(anyhow!("Failed to persist moved task metadata: {error}"));
+            }
             return Err(anyhow!(
-                "File move did not complete: {} -> {}",
-                old_path,
-                new_path
+                "Failed to persist moved task metadata: {error}; rollback failed: {}",
+                rollback_errors.join("; ")
             ));
-        }
-
-        // Only update links after the physical move has succeeded. Therefore a
-        // missing source, destination, or parent can never leave stale metadata.
-        let all_tasks = self.repo.find_all()?;
-        let mut updated = false;
-        for mut task in all_tasks {
-            let mut file_updated = false;
-            for file in task.linked_files.iter_mut() {
-                if file == old_path {
-                    *file = new_path.to_string();
-                    file_updated = true;
-                    updated = true;
-                }
-            }
-            if file_updated {
-                task.updated_at = Utc::now();
-                self.repo.save(&task)?;
-                self.json_repo.save_task(&task)?;
-            }
-        }
-
-        if updated {
-            self.sync_to_json()?;
         }
 
         Ok(())
@@ -873,6 +969,74 @@ mod tests {
         assert!(root.join(new_path).exists());
         assert!(!root.join(old_path).exists());
 
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_sync_follows_in_root_symlinked_tasks_directory() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let real_tasks = root.join(".lissue/real-tasks");
+        let linked_tasks = root.join(".lissue/tasks");
+        fs::create_dir(&real_tasks)?;
+        fs::remove_dir_all(&linked_tasks)?;
+        symlink(&real_tasks, &linked_tasks)?;
+
+        let usecase = TodoUsecase::new(root)?;
+        let task = Task::new("Imported through symlink".to_string(), None, None);
+        usecase.json_repo.save_task(&task)?;
+
+        usecase.sync()?;
+        let tasks = usecase.list_tasks(TaskFilter::default())?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Imported through symlink");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_move_rolls_back_after_json_persistence_failure() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root.clone())?;
+        let old_path = "old_file.txt";
+        let new_path = "new_file.txt";
+        fs::write(root.join(old_path), "content")?;
+
+        let mut task = usecase.add_task("JSON rollback".to_string(), None, None)?;
+        task.linked_files.push(old_path.to_string());
+        usecase.save_task(&task)?;
+
+        let id = task.global_id.to_string();
+        let json_path = root
+            .join(".lissue/tasks")
+            .join(&id[0..2])
+            .join(format!("{id}.json"));
+        let json_parent = json_path.parent().unwrap();
+        let original_mode = fs::metadata(json_parent)?.permissions().mode();
+        fs::set_permissions(
+            json_parent,
+            fs::Permissions::from_mode(original_mode & !0o222),
+        )?;
+
+        let result = usecase.move_file(old_path, new_path);
+        fs::set_permissions(json_parent, fs::Permissions::from_mode(original_mode))?;
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(root.join(old_path))?, "content");
+        assert!(!root.join(new_path).exists());
+        let restored_task = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(restored_task.linked_files, vec![old_path.to_string()]);
+        let json = fs::read_to_string(json_path)?;
+        assert!(json.contains("old_file.txt"));
+        assert!(!json.contains("new_file.txt"));
         Ok(())
     }
 
