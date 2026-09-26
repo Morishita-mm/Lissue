@@ -6,9 +6,8 @@ use crate::infrastructure::json::JsonRepository;
 use crate::infrastructure::sqlite::SqliteRepository;
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
-use lexiclean::Lexiclean;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default)]
 pub struct TaskFilter {
@@ -41,18 +40,65 @@ impl ProjectPaths {
         self.dot_lissue().join("config.yaml")
     }
 
-    pub fn validate_within_root(&self, path: &str) -> Result<PathBuf> {
-        let full_path = self.root.join(path);
-        let normalized = full_path.lexiclean();
+    /// Check a path using filesystem resolution, not just lexical components.
+    /// The nearest existing ancestor is resolved so a path that will be created
+    /// cannot escape through a symlinked parent directory.
+    fn validate_path(&self, path: &Path) -> Result<()> {
+        let root = fs::canonicalize(&self.root)
+            .with_context(|| format!("Failed to canonicalize project root: {:?}", self.root))?;
 
-        if normalized.starts_with(&self.root) {
-            Ok(full_path)
-        } else {
-            Err(anyhow!(
-                "Path traversal detected: {} is outside of project root",
-                path
-            ))
+        let mut existing = path.to_path_buf();
+        loop {
+            match fs::symlink_metadata(&existing) {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if !existing.pop() {
+                        return Err(anyhow!(
+                            "Path does not have an existing ancestor: {:?}",
+                            path
+                        ));
+                    }
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("Failed to inspect project path: {:?}", existing)
+                    });
+                }
+            }
         }
+
+        let resolved = fs::canonicalize(&existing)
+            .with_context(|| format!("Failed to resolve project path: {:?}", existing))?;
+        if !resolved.starts_with(&root) {
+            return Err(anyhow!("Path resolves outside of project root: {:?}", path));
+        }
+        Ok(())
+    }
+
+    pub fn validate_within_root(&self, path: &str) -> Result<PathBuf> {
+        let path = Path::new(path);
+        let full_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+        self.validate_path(&full_path)?;
+        Ok(full_path)
+    }
+
+    fn validate_storage_paths(&self) -> Result<()> {
+        self.validate_path(&self.dot_lissue())?;
+        self.validate_path(&self.tasks_dir())?;
+        self.validate_path(&self.db())?;
+        self.validate_path(&self.config())?;
+
+        if self.dot_lissue().exists() && !self.dot_lissue().is_dir() {
+            return Err(anyhow!(".lissue is not a directory"));
+        }
+        if self.tasks_dir().exists() && !self.tasks_dir().is_dir() {
+            return Err(anyhow!(".lissue/tasks is not a directory"));
+        }
+        Ok(())
     }
 }
 
@@ -65,17 +111,19 @@ pub struct TodoUsecase {
 
 impl TodoUsecase {
     pub fn new(start_dir: PathBuf) -> Result<Self> {
-        let root_dir = Self::find_root(start_dir)
-            .ok_or_else(|| anyhow!("Not initialized. Run 'lissue init' first in a project root."))?;
+        let root_dir = Self::find_root(start_dir).ok_or_else(|| {
+            anyhow!("Not initialized. Run 'lissue init' first in a project root.")
+        })?;
 
         let canonical_root = root_dir
             .canonicalize()
             .with_context(|| format!("Failed to canonicalize project root: {:?}", root_dir))?;
 
         let paths = ProjectPaths::new(canonical_root);
+        paths.validate_storage_paths()?;
 
         let repo = SqliteRepository::new(paths.db())?;
-        let json_repo = JsonRepository::new(paths.tasks_dir());
+        let json_repo = JsonRepository::new_with_root(paths.tasks_dir(), &paths.root)?;
         let config_repo = YamlConfigRepository::new(paths.config());
 
         Ok(Self {
@@ -100,24 +148,35 @@ impl TodoUsecase {
     }
 
     pub fn init(root_dir: PathBuf) -> Result<()> {
-        let paths = ProjectPaths::new(root_dir.clone());
+        let canonical_root = root_dir
+            .canonicalize()
+            .with_context(|| format!("Failed to canonicalize project root: {:?}", root_dir))?;
+        let paths = ProjectPaths::new(canonical_root.clone());
+        paths.validate_storage_paths()?;
         let dot_lissue = paths.dot_lissue();
 
         if !dot_lissue.exists() {
             fs::create_dir(&dot_lissue)?;
+        } else if !dot_lissue.is_dir() {
+            return Err(anyhow!(".lissue is not a directory"));
         }
 
         let tasks_dir = paths.tasks_dir();
         if !tasks_dir.exists() {
             fs::create_dir(&tasks_dir)?;
+        } else if !tasks_dir.is_dir() {
+            return Err(anyhow!(".lissue/tasks is not a directory"));
         }
 
+        paths.validate_storage_paths()?;
         let gitattributes_path = tasks_dir.join(".gitattributes");
+        paths.validate_path(&gitattributes_path)?;
         if !gitattributes_path.exists() {
-            fs::write(gitattributes_path, "**/*.json linguist-generated=true\n")?;
+            fs::write(&gitattributes_path, "**/*.json linguist-generated=true\n")?;
         }
 
-        let gitignore_path = root_dir.join(".gitignore");
+        let gitignore_path = canonical_root.join(".gitignore");
+        paths.validate_path(&gitignore_path)?;
         let mut content = if gitignore_path.exists() {
             fs::read_to_string(&gitignore_path)?
         } else {
@@ -169,6 +228,24 @@ impl TodoUsecase {
         Ok(saved_task)
     }
 
+    /// Validate every attachment before any task persistence occurs.
+    pub fn validate_file_paths(&self, file_paths: &[String]) -> Result<()> {
+        for path in file_paths {
+            let full_path = self.paths.validate_within_root(path)?;
+            if !full_path.is_file() {
+                return Err(anyhow!("File does not exist: {}", path));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_linked_paths(&self, task: &Task) -> Result<()> {
+        for path in &task.linked_files {
+            self.paths.validate_within_root(path)?;
+        }
+        Ok(())
+    }
+
     pub fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>> {
         let tasks = self.repo.find_all()?;
         let filtered = tasks
@@ -206,11 +283,13 @@ impl TodoUsecase {
             match local_task {
                 Some(lt) => {
                     if json_task.updated_at > lt.updated_at {
+                        self.validate_linked_paths(&json_task)?;
                         json_task.local_id = lt.local_id;
                         self.repo.save(&json_task)?;
                     }
                 }
                 None => {
+                    self.validate_linked_paths(&json_task)?;
                     json_task.local_id = None;
                     self.repo.save(&json_task)?;
                 }
@@ -221,6 +300,9 @@ impl TodoUsecase {
 
     fn sync_to_json(&self) -> Result<()> {
         let all_tasks = self.repo.find_all()?;
+        for task in &all_tasks {
+            self.validate_linked_paths(task)?;
+        }
         self.json_repo.save_all(&all_tasks)
     }
 
@@ -289,7 +371,7 @@ impl TodoUsecase {
             if let Some(full_path) = Some(file_path)
                 .filter(|_| config.context.strategy == "raw_content")
                 .and_then(|p| self.paths.validate_within_root(p).ok())
-                .filter(|p| p.exists())
+                .filter(|p| p.is_file())
             {
                 let content = fs::read_to_string(full_path)?;
                 context.push_str("```\n");
@@ -320,6 +402,7 @@ impl TodoUsecase {
     }
 
     pub fn save_task(&self, task: &Task) -> Result<()> {
+        self.validate_linked_paths(task)?;
         self.repo.save(task)?;
         self.json_repo.save_task(task)
     }
@@ -350,11 +433,8 @@ impl TodoUsecase {
             .find_by_local_id(local_id)?
             .ok_or_else(|| anyhow!("Task not found: {}", local_id))?;
 
+        self.validate_file_paths(&file_paths)?;
         for path in file_paths {
-            let full_path = self.paths.validate_within_root(&path)?;
-            if !full_path.exists() {
-                return Err(anyhow!("File does not exist: {}", path));
-            }
             if !task.linked_files.contains(&path) {
                 task.linked_files.push(path);
             }
@@ -387,12 +467,12 @@ impl TodoUsecase {
             })
         {
             let entry = entry?;
-            if entry.file_type().is_file() {
-                if let Ok(path) = entry.path().strip_prefix(&self.paths.root) {
-                    let path_str = path.to_string_lossy().to_string();
-                    if !path_str.is_empty() {
-                        files.push(path_str);
-                    }
+            if entry.file_type().is_file()
+                && let Ok(path) = entry.path().strip_prefix(&self.paths.root)
+            {
+                let path_str = path.to_string_lossy().to_string();
+                if !path_str.is_empty() {
+                    files.push(path_str);
                 }
             }
         }
@@ -400,48 +480,227 @@ impl TodoUsecase {
         Ok(files)
     }
 
+    fn persist_move_metadata(&self, changes: &[(Task, Task)]) -> Result<()> {
+        for (_, updated) in changes {
+            self.repo.save(updated)?;
+        }
+        for (_, updated) in changes {
+            self.json_repo.save_task(updated)?;
+        }
+        Ok(())
+    }
+
+    fn restore_move_metadata(&self, changes: &[(Task, Task)]) -> Result<()> {
+        let mut errors = Vec::new();
+        for (original, _) in changes {
+            if let Err(error) = self.repo.save(original) {
+                errors.push(format!("database restore failed: {error}"));
+            }
+        }
+        for (original, _) in changes {
+            if let Err(error) = self.json_repo.save_task(original) {
+                errors.push(format!("JSON restore failed: {error}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!("{}", errors.join("; ")))
+        }
+    }
+
+    fn rollback_file_move(
+        &self,
+        old_full: &Path,
+        new_full: &Path,
+        old_path: &str,
+        new_path: &str,
+        moved_by_git: bool,
+    ) -> Result<()> {
+        let mut git_rollback_error = None;
+        if moved_by_git {
+            match std::process::Command::new("git")
+                .arg("mv")
+                .arg(new_path)
+                .arg(old_path)
+                .current_dir(&self.paths.root)
+                .status()
+            {
+                Ok(status) if status.success() => {
+                    if old_full.is_file() && !new_full.exists() {
+                        return Ok(());
+                    }
+                    git_rollback_error = Some(
+                        "git mv rollback completed without restoring the worktree".to_string(),
+                    );
+                }
+                Ok(status) => {
+                    git_rollback_error =
+                        Some(format!("git mv rollback exited unsuccessfully: {}", status));
+                }
+                Err(error) => {
+                    git_rollback_error = Some(format!("could not run git mv rollback: {error}"));
+                }
+            }
+
+            // A failed reverse git operation may still have restored the
+            // worktree while leaving the index uncertain. Never call that a
+            // clean rollback; report the Git failure to the caller.
+            if old_full.is_file() && !new_full.exists() {
+                return Err(anyhow!(
+                    "{}; worktree restored but Git index state is uncertain",
+                    git_rollback_error
+                        .as_deref()
+                        .unwrap_or("git mv rollback failed")
+                ));
+            }
+        }
+
+        if old_full.exists() {
+            return Err(anyhow!(
+                "Cannot roll back file move because source exists: {}{}",
+                old_path,
+                git_rollback_error
+                    .as_deref()
+                    .map(|error| format!("; {error}"))
+                    .unwrap_or_default()
+            ));
+        }
+        if !new_full.is_file() {
+            return Err(anyhow!(
+                "Cannot roll back file move because destination is missing: {}{}",
+                new_path,
+                git_rollback_error
+                    .as_deref()
+                    .map(|error| format!("; {error}"))
+                    .unwrap_or_default()
+            ));
+        }
+        fs::rename(new_full, old_full).with_context(|| {
+            format!(
+                "Failed to roll back file move from {} to {}",
+                new_path, old_path
+            )
+        })?;
+        if let Some(error) = git_rollback_error {
+            return Err(anyhow!(
+                "{error}; worktree restored with filesystem rename but Git index state is uncertain"
+            ));
+        }
+        Ok(())
+    }
+
     pub fn move_file(&self, old_path: &str, new_path: &str) -> Result<()> {
         let old_full = self.paths.validate_within_root(old_path)?;
         let new_full = self.paths.validate_within_root(new_path)?;
 
-        let config = self.get_config()?;
-        let all_tasks = self.repo.find_all()?;
-        let mut updated = false;
+        if !old_full.is_file() {
+            return Err(anyhow!("Source file does not exist: {}", old_path));
+        }
+        if fs::symlink_metadata(&new_full).is_ok() {
+            return Err(anyhow!("Destination already exists: {}", new_path));
+        }
+        let new_parent = new_full
+            .parent()
+            .ok_or_else(|| anyhow!("Destination has no parent directory: {}", new_path))?;
+        if !new_parent.is_dir() {
+            return Err(anyhow!("Destination parent does not exist: {}", new_path));
+        }
 
-        for mut task in all_tasks {
+        let config = self.get_config()?;
+        // Read and prepare every metadata change before touching the filesystem.
+        // This makes database/JSON failures happen before a move whenever possible.
+        let all_tasks = self.repo.find_all()?;
+        let mut changes = Vec::new();
+        for task in all_tasks {
+            let mut updated = task.clone();
             let mut file_updated = false;
-            for file in task.linked_files.iter_mut() {
+            for file in &mut updated.linked_files {
                 if file == old_path {
                     *file = new_path.to_string();
                     file_updated = true;
-                    updated = true;
                 }
             }
             if file_updated {
-                task.updated_at = Utc::now();
-                self.repo.save(&task)?;
-                self.json_repo.save_task(&task)?;
+                updated.updated_at = Utc::now();
+                self.validate_linked_paths(&updated)?;
+                self.json_repo.validate_task_path(&updated)?;
+                changes.push((task, updated));
             }
         }
 
-        if updated {
-            self.sync_to_json()?;
-        }
-
-        if config.integration.git_mv_hook {
-            let status = std::process::Command::new("git")
+        let moved_by_git = if config.integration.git_mv_hook {
+            std::process::Command::new("git")
                 .arg("mv")
                 .arg(old_path)
                 .arg(new_path)
                 .current_dir(&self.paths.root)
-                .status();
+                .status()
+                .is_ok_and(|status| status.success())
+        } else {
+            false
+        };
 
-            if status.is_ok_and(|s| s.success()) {
-                return Ok(());
+        if !moved_by_git {
+            // A failed hook must not be allowed to leave us guessing about the
+            // filesystem state before falling back to the normal rename.
+            if !old_full.exists() && new_full.exists() {
+                let rollback =
+                    self.rollback_file_move(&old_full, &new_full, old_path, new_path, true);
+                return match rollback {
+                    Ok(()) => Err(anyhow!(
+                        "git mv failed after changing the filesystem: {} -> {}; rollback succeeded",
+                        old_path,
+                        new_path
+                    )),
+                    Err(error) => Err(anyhow!(
+                        "git mv failed after changing the filesystem: {} -> {}; rollback failed: {error}",
+                        old_path,
+                        new_path
+                    )),
+                };
             }
+            fs::rename(&old_full, &new_full).with_context(|| {
+                format!("Failed to move file from {} to {}", old_path, new_path)
+            })?;
         }
 
-        let _ = fs::rename(old_full, new_full);
+        if old_full.exists() || !new_full.is_file() {
+            let rollback =
+                self.rollback_file_move(&old_full, &new_full, old_path, new_path, moved_by_git);
+            return match rollback {
+                Ok(()) => Err(anyhow!(
+                    "File move did not complete: {} -> {}",
+                    old_path,
+                    new_path
+                )),
+                Err(error) => Err(anyhow!(
+                    "File move did not complete: {} -> {}; rollback failed: {error}",
+                    old_path,
+                    new_path
+                )),
+            };
+        }
+
+        if let Err(error) = self.persist_move_metadata(&changes) {
+            let mut rollback_errors = Vec::new();
+            if let Err(rollback_error) = self.restore_move_metadata(&changes) {
+                rollback_errors.push(rollback_error.to_string());
+            }
+            if let Err(rollback_error) =
+                self.rollback_file_move(&old_full, &new_full, old_path, new_path, moved_by_git)
+            {
+                rollback_errors.push(rollback_error.to_string());
+            }
+            if rollback_errors.is_empty() {
+                return Err(anyhow!("Failed to persist moved task metadata: {error}"));
+            }
+            return Err(anyhow!(
+                "Failed to persist moved task metadata: {error}; rollback failed: {}",
+                rollback_errors.join("; ")
+            ));
+        }
+
         Ok(())
     }
 
@@ -453,11 +712,7 @@ impl TodoUsecase {
         let title = lines[0].trim().to_string();
         let description = if lines.len() > 1 {
             let desc = lines[1..].join("\n").trim().to_string();
-            if desc.is_empty() {
-                None
-            } else {
-                Some(desc)
-            }
+            if desc.is_empty() { None } else { Some(desc) }
         } else {
             None
         };
@@ -494,7 +749,7 @@ mod tests {
         fs::create_dir_all(&sub)?;
 
         TodoUsecase::init(root.clone())?;
-        
+
         // Root で追加
         let usecase_root = TodoUsecase::new(root)?;
         usecase_root.add_task("Root Task".to_string(), None, None)?;
@@ -502,10 +757,13 @@ mod tests {
         // Subdir で一覧取得
         let usecase_sub = TodoUsecase::new(sub)?;
         let tasks = usecase_sub.list_tasks(TaskFilter::default())?;
-        
+
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title, "Root Task");
-        assert_eq!(usecase_sub.paths.root.canonicalize()?, usecase_root.paths.root.canonicalize()?);
+        assert_eq!(
+            usecase_sub.paths.root.canonicalize()?,
+            usecase_root.paths.root.canonicalize()?
+        );
 
         Ok(())
     }
@@ -648,7 +906,7 @@ mod tests {
         fs::write(root.join(file2), "content")?;
 
         usecase.add_task("Attach Test".to_string(), None, None)?;
-        
+
         // Success
         usecase.attach_files(1, vec![file1.to_string(), file2.to_string()])?;
         let task = usecase.repo.find_by_local_id(1)?.unwrap();
@@ -661,10 +919,18 @@ mod tests {
         assert_eq!(task.linked_files.len(), 2);
 
         // File not exist
-        assert!(usecase.attach_files(1, vec!["not_exist.txt".to_string()]).is_err());
+        assert!(
+            usecase
+                .attach_files(1, vec!["not_exist.txt".to_string()])
+                .is_err()
+        );
 
         // Path traversal
-        assert!(usecase.attach_files(1, vec!["../outside.txt".to_string()]).is_err());
+        assert!(
+            usecase
+                .attach_files(1, vec!["../outside.txt".to_string()])
+                .is_err()
+        );
 
         Ok(())
     }
@@ -705,7 +971,7 @@ mod tests {
 
         usecase.add_task("Detach Test".to_string(), None, None)?;
         usecase.attach_files(1, vec![file.to_string()])?;
-        
+
         let task = usecase.repo.find_by_local_id(1)?.unwrap();
         assert_eq!(task.linked_files.len(), 1);
 
@@ -754,6 +1020,74 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_sync_follows_in_root_symlinked_tasks_directory() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let real_tasks = root.join(".lissue/real-tasks");
+        let linked_tasks = root.join(".lissue/tasks");
+        fs::create_dir(&real_tasks)?;
+        fs::remove_dir_all(&linked_tasks)?;
+        symlink(&real_tasks, &linked_tasks)?;
+
+        let usecase = TodoUsecase::new(root)?;
+        let task = Task::new("Imported through symlink".to_string(), None, None);
+        usecase.json_repo.save_task(&task)?;
+
+        usecase.sync()?;
+        let tasks = usecase.list_tasks(TaskFilter::default())?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Imported through symlink");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_move_rolls_back_after_json_persistence_failure() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir()?;
+        let root = dir.path().to_path_buf();
+        TodoUsecase::init(root.clone())?;
+        let usecase = TodoUsecase::new(root.clone())?;
+        let old_path = "old_file.txt";
+        let new_path = "new_file.txt";
+        fs::write(root.join(old_path), "content")?;
+
+        let mut task = usecase.add_task("JSON rollback".to_string(), None, None)?;
+        task.linked_files.push(old_path.to_string());
+        usecase.save_task(&task)?;
+
+        let id = task.global_id.to_string();
+        let json_path = root
+            .join(".lissue/tasks")
+            .join(&id[0..2])
+            .join(format!("{id}.json"));
+        let json_parent = json_path.parent().unwrap();
+        let original_mode = fs::metadata(json_parent)?.permissions().mode();
+        fs::set_permissions(
+            json_parent,
+            fs::Permissions::from_mode(original_mode & !0o222),
+        )?;
+
+        let result = usecase.move_file(old_path, new_path);
+        fs::set_permissions(json_parent, fs::Permissions::from_mode(original_mode))?;
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(root.join(old_path))?, "content");
+        assert!(!root.join(new_path).exists());
+        let restored_task = usecase.repo.find_by_local_id(1)?.unwrap();
+        assert_eq!(restored_task.linked_files, vec![old_path.to_string()]);
+        let json = fs::read_to_string(json_path)?;
+        assert!(json.contains("old_file.txt"));
+        assert!(!json.contains("new_file.txt"));
+        Ok(())
+    }
+
     #[test]
     fn test_validate_path() -> Result<()> {
         let dir = tempdir()?;
@@ -763,10 +1097,20 @@ mod tests {
 
         // Project root
         assert!(usecase.paths.validate_within_root("valid.txt").is_ok());
-        assert!(usecase.paths.validate_within_root("subdir/valid.txt").is_ok());
+        assert!(
+            usecase
+                .paths
+                .validate_within_root("subdir/valid.txt")
+                .is_ok()
+        );
 
         // Path traversal
-        assert!(usecase.paths.validate_within_root("../outside.txt").is_err());
+        assert!(
+            usecase
+                .paths
+                .validate_within_root("../outside.txt")
+                .is_err()
+        );
         assert!(usecase.paths.validate_within_root("/etc/passwd").is_err());
 
         Ok(())
@@ -876,6 +1220,93 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title, "Task 1");
 
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_init_rejects_external_lissue_symlink() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let outside = tempdir()?;
+        let external_lissue = outside.path().join("external-lissue");
+        fs::create_dir(&external_lissue)?;
+        symlink(&external_lissue, root.path().join(".lissue"))?;
+
+        assert!(TodoUsecase::init(root.path().to_path_buf()).is_err());
+        assert!(!external_lissue.join("data.db").exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_new_rejects_external_tasks_symlink() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let outside = tempdir()?;
+        TodoUsecase::init(root.path().to_path_buf())?;
+        fs::remove_dir_all(root.path().join(".lissue/tasks"))?;
+        symlink(outside.path(), root.path().join(".lissue/tasks"))?;
+
+        assert!(TodoUsecase::new(root.path().to_path_buf()).is_err());
+        assert!(fs::read_dir(outside.path())?.next().is_none());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_context_does_not_read_external_symlink() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let outside = tempdir()?;
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, "secret-value")?;
+        TodoUsecase::init(root.path().to_path_buf())?;
+        let usecase = TodoUsecase::new(root.path().to_path_buf())?;
+        symlink(&secret, root.path().join("linked.txt"))?;
+
+        let mut config = usecase.get_config()?;
+        config.context.strategy = "raw_content".to_string();
+        usecase.config_repo.save(&config)?;
+        let mut task = usecase.add_task("Safe context".to_string(), None, None)?;
+        task.linked_files.push("linked.txt".to_string());
+        // Bypass the public path validation to model pre-existing untrusted
+        // metadata loaded from an older JSON/database file.
+        usecase.repo.save(&task)?;
+
+        let (_, context) = usecase.get_task_context(1)?;
+        assert!(context.contains("- linked.txt"));
+        assert!(!context.contains("secret-value"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_task_rejects_external_linked_path() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let outside = tempdir()?;
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, "secret")?;
+        TodoUsecase::init(root.path().to_path_buf())?;
+        let usecase = TodoUsecase::new(root.path().to_path_buf())?;
+        symlink(&secret, root.path().join("linked.txt"))?;
+
+        let mut task = usecase.add_task("Reject unsafe metadata".to_string(), None, None)?;
+        task.linked_files.push("linked.txt".to_string());
+        assert!(usecase.save_task(&task).is_err());
+        assert!(
+            usecase
+                .repo
+                .find_by_local_id(1)?
+                .unwrap()
+                .linked_files
+                .is_empty()
+        );
         Ok(())
     }
 }
