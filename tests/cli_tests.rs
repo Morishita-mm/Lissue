@@ -378,3 +378,121 @@ fn test_tui_uninitialized() {
         .failure()
         .stderr(predicate::str::contains("Not initialized"));
 }
+
+#[test]
+fn test_add_invalid_file_does_not_persist_task() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("init")
+        .assert()
+        .success();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("add")
+        .arg("Invalid attachment")
+        .arg("-f")
+        .arg("missing.txt")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("File does not exist"));
+
+    let output = Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("list")
+        .arg("--format")
+        .arg("json")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(tasks.as_array().unwrap().len(), 0);
+    assert!(
+        walkdir::WalkDir::new(root.join(".lissue/tasks"))
+            .into_iter()
+            .filter_map(Result::ok)
+            .all(|entry| entry.path().extension().and_then(|ext| ext.to_str()) != Some("json"))
+    );
+}
+
+#[test]
+fn test_mv_failures_preserve_file_and_link() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("init")
+        .assert()
+        .success();
+    std::fs::write(root.join("old.txt"), "original").unwrap();
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("add")
+        .arg("Move failures")
+        .arg("-f")
+        .arg("old.txt")
+        .assert()
+        .success();
+
+    // Missing source must not alter the task or create a destination.
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .args(["mv", "missing.txt", "new.txt"])
+        .assert()
+        .failure();
+    assert_eq!(
+        std::fs::read_to_string(root.join("old.txt")).unwrap(),
+        "original"
+    );
+    assert!(!root.join("new.txt").exists());
+
+    // Missing destination parent must fail before any metadata update.
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .args(["mv", "old.txt", "missing-dir/new.txt"])
+        .assert()
+        .failure();
+    assert_eq!(
+        std::fs::read_to_string(root.join("old.txt")).unwrap(),
+        "original"
+    );
+    assert!(!root.join("missing-dir/new.txt").exists());
+
+    // An existing destination must never be overwritten.
+    std::fs::write(root.join("new.txt"), "destination").unwrap();
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .args(["mv", "old.txt", "new.txt"])
+        .assert()
+        .failure();
+    assert_eq!(
+        std::fs::read_to_string(root.join("old.txt")).unwrap(),
+        "original"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("new.txt")).unwrap(),
+        "destination"
+    );
+
+    Command::cargo_bin("lissue")
+        .unwrap()
+        .current_dir(root)
+        .arg("context")
+        .arg("1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- old.txt"));
+}

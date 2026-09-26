@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use lissue::domain;
 use lissue::presentation::{Cli, Commands};
-use lissue::usecase::todo::TaskFilter;
 use lissue::usecase::TodoUsecase;
+use lissue::usecase::todo::TaskFilter;
 use std::env;
 use std::fs;
 use std::io::Read;
@@ -47,6 +47,9 @@ fn main() -> Result<()> {
                 return Err(anyhow::anyhow!("Title is required."));
             }
 
+            // Validate every attachment before creating the task. This keeps an
+            // invalid `add -f` from leaving a task behind in SQLite/JSON.
+            usecase.validate_file_paths(&files)?;
             let task = usecase.add_task(final_title, final_message, parent)?;
             if !files.is_empty() {
                 usecase.attach_files(task.local_id.unwrap(), files)?;
