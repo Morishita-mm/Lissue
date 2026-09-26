@@ -146,8 +146,12 @@ impl JsonRepository {
                 self.base_path
             )
         })?;
-        for entry in walkdir::WalkDir::new(walk_root) {
-            let entry = entry?;
+        for entry in walkdir::WalkDir::new(walk_root).follow_links(true) {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if error.loop_ancestor().is_some() => continue,
+                Err(error) => return Err(error.into()),
+            };
             self.validate_path(entry.path())?;
             if entry.file_type().is_file()
                 && entry.path().extension().is_some_and(|ext| ext == "json")
@@ -226,6 +230,95 @@ mod tests {
         let loaded = repo.load_all()?;
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].title, "Through symlink");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_all_follows_internal_prefix_and_json_symlinks() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let tasks = root.path().join("tasks");
+        let real_prefix = root.path().join("real-prefix");
+        fs::create_dir(&tasks)?;
+        fs::create_dir(&real_prefix)?;
+        let task1 = Task::new("Through prefix symlink".to_string(), None, None);
+        let prefix = task1.global_id.to_string()[0..2].to_string();
+        symlink(&real_prefix, tasks.join(&prefix))?;
+
+        let repo = JsonRepository::new_with_root(&tasks, root.path())?;
+        repo.save_task(&task1)?;
+
+        let task2 = Task::new("Through JSON symlink".to_string(), None, None);
+        let id2 = task2.global_id.to_string();
+        let external_json = root.path().join("real-task.json");
+        let file = File::create(&external_json)?;
+        serde_json::to_writer_pretty(file, &task2)?;
+        symlink(
+            &external_json,
+            tasks.join(&prefix).join(format!("{id2}.json")),
+        )?;
+
+        let loaded = repo.load_all()?;
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.iter().any(|task| task.title == task1.title));
+        assert!(loaded.iter().any(|task| task.title == task2.title));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_all_skips_internal_symlink_cycles() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let tasks = root.path().join("tasks");
+        fs::create_dir(&tasks)?;
+        let task = Task::new("Cycle-safe task".to_string(), None, None);
+        let prefix = task.global_id.to_string()[0..2].to_string();
+        fs::create_dir(tasks.join(&prefix))?;
+
+        let repo = JsonRepository::new_with_root(&tasks, root.path())?;
+        repo.save_task(&task)?;
+        symlink(tasks.join(&prefix), tasks.join(&prefix).join("cycle"))?;
+
+        let loaded = repo.load_all()?;
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].title, task.title);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_all_rejects_external_prefix_and_json_symlinks() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir()?;
+        let outside = tempdir()?;
+        let tasks = root.path().join("tasks");
+        fs::create_dir(&tasks)?;
+        let task = Task::new("Outside task".to_string(), None, None);
+        let id = task.global_id.to_string();
+        let prefix = &id[0..2];
+        let external_prefix = outside.path().join("prefix");
+        fs::create_dir(&external_prefix)?;
+        let external_prefix_json = external_prefix.join(format!("{id}.json"));
+        serde_json::to_writer_pretty(File::create(&external_prefix_json)?, &task)?;
+        symlink(&external_prefix, tasks.join(prefix))?;
+
+        let repo = JsonRepository::new_with_root(&tasks, root.path())?;
+        assert!(repo.load_all().is_err());
+
+        fs::remove_file(tasks.join(prefix))?;
+        fs::create_dir(tasks.join(prefix))?;
+        let external_file = outside.path().join("external.json");
+        serde_json::to_writer_pretty(File::create(&external_file)?, &task)?;
+        symlink(
+            &external_file,
+            tasks.join(prefix).join(format!("{id}.json")),
+        )?;
+        assert!(repo.load_all().is_err());
         Ok(())
     }
 
