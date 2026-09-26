@@ -27,11 +27,11 @@ pub fn get_layout(area: Rect) -> (Rect, Rect, Rect, Rect, Rect) {
         .split(main_horizontal[1]);
 
     (
-        vertical_chunks[0],  // Tabs
-        main_horizontal[0],  // List
-        detail_vertical[0],  // Detail
-        detail_vertical[1],  // Related Files
-        vertical_chunks[2],  // Status Line
+        vertical_chunks[0], // Tabs
+        main_horizontal[0], // List
+        detail_vertical[0], // Detail
+        detail_vertical[1], // Related Files
+        vertical_chunks[2], // Status Line
     )
 }
 
