@@ -517,29 +517,63 @@ impl TodoUsecase {
         new_path: &str,
         moved_by_git: bool,
     ) -> Result<()> {
+        let mut git_rollback_error = None;
         if moved_by_git {
-            let git_rollback = std::process::Command::new("git")
+            match std::process::Command::new("git")
                 .arg("mv")
                 .arg(new_path)
                 .arg(old_path)
                 .current_dir(&self.paths.root)
                 .status()
-                .is_ok_and(|status| status.success());
-            if git_rollback && old_full.is_file() && !new_full.exists() {
-                return Ok(());
+            {
+                Ok(status) if status.success() => {
+                    if old_full.is_file() && !new_full.exists() {
+                        return Ok(());
+                    }
+                    git_rollback_error = Some(
+                        "git mv rollback completed without restoring the worktree".to_string(),
+                    );
+                }
+                Ok(status) => {
+                    git_rollback_error =
+                        Some(format!("git mv rollback exited unsuccessfully: {}", status));
+                }
+                Err(error) => {
+                    git_rollback_error = Some(format!("could not run git mv rollback: {error}"));
+                }
+            }
+
+            // A failed reverse git operation may still have restored the
+            // worktree while leaving the index uncertain. Never call that a
+            // clean rollback; report the Git failure to the caller.
+            if old_full.is_file() && !new_full.exists() {
+                return Err(anyhow!(
+                    "{}; worktree restored but Git index state is uncertain",
+                    git_rollback_error
+                        .as_deref()
+                        .unwrap_or("git mv rollback failed")
+                ));
             }
         }
 
         if old_full.exists() {
             return Err(anyhow!(
-                "Cannot roll back file move because source exists: {}",
-                old_path
+                "Cannot roll back file move because source exists: {}{}",
+                old_path,
+                git_rollback_error
+                    .as_deref()
+                    .map(|error| format!("; {error}"))
+                    .unwrap_or_default()
             ));
         }
         if !new_full.is_file() {
             return Err(anyhow!(
-                "Cannot roll back file move because destination is missing: {}",
-                new_path
+                "Cannot roll back file move because destination is missing: {}{}",
+                new_path,
+                git_rollback_error
+                    .as_deref()
+                    .map(|error| format!("; {error}"))
+                    .unwrap_or_default()
             ));
         }
         fs::rename(new_full, old_full).with_context(|| {
@@ -548,6 +582,11 @@ impl TodoUsecase {
                 new_path, old_path
             )
         })?;
+        if let Some(error) = git_rollback_error {
+            return Err(anyhow!(
+                "{error}; worktree restored with filesystem rename but Git index state is uncertain"
+            ));
+        }
         Ok(())
     }
 
@@ -606,11 +645,20 @@ impl TodoUsecase {
             // A failed hook must not be allowed to leave us guessing about the
             // filesystem state before falling back to the normal rename.
             if !old_full.exists() && new_full.exists() {
-                return Err(anyhow!(
-                    "git mv failed after changing the filesystem: {} -> {}",
-                    old_path,
-                    new_path
-                ));
+                let rollback =
+                    self.rollback_file_move(&old_full, &new_full, old_path, new_path, true);
+                return match rollback {
+                    Ok(()) => Err(anyhow!(
+                        "git mv failed after changing the filesystem: {} -> {}; rollback succeeded",
+                        old_path,
+                        new_path
+                    )),
+                    Err(error) => Err(anyhow!(
+                        "git mv failed after changing the filesystem: {} -> {}; rollback failed: {error}",
+                        old_path,
+                        new_path
+                    )),
+                };
             }
             fs::rename(&old_full, &new_full).with_context(|| {
                 format!("Failed to move file from {} to {}", old_path, new_path)
